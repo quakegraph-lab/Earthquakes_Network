@@ -181,4 +181,3 @@ cython_debug/
 
 # do not upload root files
 *.root
-data/Japan/*.csv
