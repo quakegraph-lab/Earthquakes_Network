@@ -268,6 +268,7 @@ def compute_assortativity(G: nx.DiGraph) -> pd.DataFrame:
 def plot_knn(
     G: nx.DiGraph,
     title: str = "",
+    gamma: Optional[float] = None,
     save: bool = True,
 ) -> None:
     """
@@ -287,6 +288,15 @@ def plot_knn(
     (:math:`\\mu < 0`).  The slope :math:`\\mu` is the *degree mixing exponent*
     (Pastor-Satorras *et al.* 2001).
 
+    Two finite-size cutoffs are annotated when ``gamma`` is supplied:
+
+    * **Natural cutoff** :math:`k_{\\mathrm{nat}} = N^{1/(\\gamma-1)}` — the
+      maximum degree expected from the degree distribution alone.  Disassortativity
+      observed below this threshold is a genuine structural property.
+    * **Structural cutoff** :math:`k_{\\mathrm{str}} = N^{1/2}` — above this value
+      hubs are forced to connect to each other purely by finiteness, creating
+      spurious disassortativity (Boguñá *et al.* 2004).
+
     For directed networks the function is evaluated using *total* degree
     (in + out) so the result is comparable with the undirected coefficient.
 
@@ -296,6 +306,9 @@ def plot_knn(
         Network (directed or undirected).
     title : str
         Figure title suffix.
+    gamma : float, optional
+        Power-law exponent of the degree distribution (MLE estimate).
+        If provided, natural and structural cutoff lines are drawn.
 
     References
     ----------
@@ -304,9 +317,13 @@ def plot_knn(
 
     Newman M.E.J. (2003). Mixing patterns in networks.
     *Phys. Rev. E* 67, 026126.
+
+    Boguñá M., Pastor-Satorras R. & Vespignani A. (2004). Cut-offs and finite
+    size effects in scale-free networks. *Eur. Phys. J. B* 38, 205–209.
     """
     G_und = G.to_undirected()
     G_und.remove_edges_from(nx.selfloop_edges(G_und))
+    N = G_und.number_of_nodes()
 
     knn = nx.average_neighbor_degree(G_und, weight=None)
     degrees = dict(G_und.degree())
@@ -331,16 +348,29 @@ def plot_knn(
                label=r"$\bar{k}_{\mathrm{nn}}(k)$ binned mean")
     ax.plot(k_fit, knn_fit, "r--", linewidth=1.8,
             label=rf"Power-law fit $\mu = {mu:.3f}$")
+
+    # Finite-size cutoffs
+    k_str = float(np.sqrt(N))
+    ax.axvline(k_str, color="darkorange", linewidth=1.5, linestyle=":",
+               label=rf"$k_{{\mathrm{{str}}}} = \sqrt{{N}} = {k_str:.0f}$")
+    if gamma is not None and gamma > 1.0:
+        k_nat = float(N ** (1.0 / (gamma - 1.0)))
+        ax.axvline(k_nat, color="green", linewidth=1.5, linestyle="--",
+                   label=rf"$k_{{\mathrm{{nat}}}} = N^{{1/(\gamma-1)}} = {k_nat:.0f}$")
+
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("Degree $k$", fontsize=12)
     ax.set_ylabel(r"$\bar{k}_{\mathrm{nn}}(k)$", fontsize=12)
     ax.set_title(
         rf"Average nearest-neighbour degree — {title}" + "\n"
-        rf"$\mu = {mu:.3f}$ ({'disassortative' if mu < 0 else 'assortative'})",
+        rf"$\mu = {mu:.3f}$ ({'disassortative' if mu < 0 else 'assortative'})"
+        + (rf", $k_{{\mathrm{{str}}}}={k_str:.0f}$" +
+           (rf", $k_{{\mathrm{{nat}}}}={k_nat:.0f}$" if gamma is not None and gamma > 1.0 else "")
+           ),
         fontsize=11,
     )
-    ax.legend(fontsize=10)
+    ax.legend(fontsize=9)
     ax.grid(True, linestyle="--", alpha=0.3)
     plt.tight_layout()
     if save:

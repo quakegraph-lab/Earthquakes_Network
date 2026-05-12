@@ -90,6 +90,43 @@ in empirical data. *SIAM Review*, 51(4), 661–703.
 
 ---
 
+### Preferential Attachment
+
+The Barabási–Albert model (1999) predicts that a network grows by preferential attachment:
+a new edge incident on node *i* is drawn with probability proportional to its current
+degree k_i — the *rich-get-richer* mechanism that generates a power-law degree distribution
+with γ ≈ 3. Empirical verification requires measuring the *attachment kernel* π(k) —
+the per-unit-time rate at which a node of degree *k* gains new edges — from the observed
+edge-addition sequence. If π(k) ∝ k^α, then α = 1 recovers linear preferential attachment;
+α < 1 indicates sub-linear growth (fitness or geographical constraints modulating the
+attachment process); α > 1 indicates super-linear growth, associated with extreme hub
+reinforcement and condensation.
+
+The measurement follows the empirical estimator of Jeong, Néda & Barabási (2003). The
+event sequence is replayed in chronological order. At each time step a directed edge is
+added from the cell of event *i* to the cell of event *i*+1, and the degree of both
+endpoints at the moment of attachment is recorded. The accumulated degree increments are
+binned by pre-attachment degree *k* to form π(k). A power-law fit on log-log axes yields
+the attachment exponent α; the best-fit curve and the α = 1 reference line (linear BA
+prediction) are plotted for comparison. In the Abe–Suzuki cell-transition model nodes
+(spatial cells) are fixed — not newly created — so the estimator is adapted to measure
+how the rate at which an already-present cell attracts new transitions scales with its
+accumulated degree. This adaptation is exact for multi-graph growth processes where the
+degree of an existing node changes over time in response to new events.
+
+The seismological interpretation of α is direct: α < 1 implies that seismic activity
+distributes across fault zones in a manner tempered by spatial capacity or rupture-area
+limits (sub-linear growth); α ≈ 1 recovers the BA universality class and supports the
+pure preferential-attachment origin of the power-law exponent; α > 1 is consistent with
+runaway aftershock sequences in which already-active cells continue to dominate (super-
+linear reinforcement), a pattern expected transiently following M > 7 mainshocks such as
+Tōhoku 2011.
+
+*Reference:* Jeong H., Néda Z. & Barabási A.-L. (2003). Measuring preferential attachment
+in evolving networks. *Europhysics Letters*, 61(4), 567–572.
+
+---
+
 ### Null Model Comparison
 
 Four synthetic benchmark graphs are constructed and compared against the empirical network
@@ -142,6 +179,16 @@ potential of each cell from the first-mover advantage of preferential attachment
 Lorenz condensation curve and Gini coefficient diagnose whether one fault zone has
 captured a disproportionate share of the network's degree — the network-theoretic
 signature of Bose-Einstein condensation (Bianconi & Barabási 2001).
+
+The observed fitness distribution ρ(β̂) is compared against three theoretical regimes.
+Under the *equal-fitness* (pure BA) regime all nodes share the same fitness, and ρ(β̂)
+collapses to a spike at β̂ = 0.5. Under a *uniform-fitness* distribution — nodes drawn
+independently from a flat prior — ρ(β̂) is approximately uniform on [0, γ−1]. In the
+*Bose-Einstein condensation* limit a single node (the fittest fault zone) accumulates a
+macroscopic fraction of all degree, appearing as an extreme outlier well beyond the bulk
+of the distribution. The empirical ρ(β̂) is plotted alongside a kernel density estimate,
+a vertical marker at β̂ = 0.5, and a shaded band spanning the uniform-fitness support;
+an automated verdict classifies the network into the closest theoretical regime.
 
 ---
 
@@ -237,6 +284,18 @@ k̄_nn(k) ∝ k^μ is the *degree-mixing exponent* (Pastor-Satorras, Vázquez & 
 across all degree classes; its magnitude characterises how steeply the tendency to avoid
 hubs grows with degree. The exponent μ is reported alongside Newman's *r* in the summary
 table.
+
+Two finite-size cutoff thresholds are annotated on the k̄_nn(k) plot to disambiguate
+structural from genuine disassortativity (Boguñá, Pastor-Satorras & Vespignani 2004). The
+*structural cutoff* k_str = √N marks the degree beyond which, purely by the finite-size
+constraint on multi-edges, hubs are forced to share neighbours — producing spurious
+disassortativity that is an artefact of the sampling regime rather than a property of the
+generating process. The *natural cutoff* k_nat = N^{1/(γ−1)}, derived from the power-law
+exponent γ estimated by MLE, gives the finite-size truncation point of the degree
+distribution itself: in an infinite network with the same γ, the tail would extend beyond
+k_nat. Disassortativity observed above k_str should be interpreted with caution; below
+k_str, the mixing exponent μ reflects the genuine tendency of mid-degree nodes to connect
+to the periphery.
 
 **Directed degree mixing.** Because the network is directed, four distinct mixing channels
 exist: out→out (do cells that trigger many events preferentially connect to other prolific
@@ -624,8 +683,14 @@ Baiesi M. & Paczuski M. (2004). Scale-free networks of earthquakes and aftershoc
 Bandt C. & Pompe B. (2002). Permutation entropy: a natural complexity measure for time
 series. *Physical Review Letters*, 88, 174102.
 
+Bianconi G. & Barabási A.-L. (2001). Bose-Einstein condensation in complex networks.
+*Physical Review Letters*, 86, 5632–5635.
+
 Blondel V. D., Guillaume J.-L., Lambiotte R. & Lefebvre E. (2008). Fast unfolding of
 communities in large networks. *Journal of Statistical Mechanics*, P10008.
+
+Boguñá M., Pastor-Satorras R. & Vespignani A. (2004). Cut-offs and finite size effects in
+scale-free networks. *European Physical Journal B*, 38(2), 205–209.
 
 Clauset A., Shalizi C. R. & Newman M. E. J. (2009). Power-law distributions in empirical
 data. *SIAM Review*, 51(4), 661–703.
@@ -644,6 +709,9 @@ structure of networks. *PNAS*, 107(24), 10815–10820.
 
 Granovetter M. S. (1973). The strength of weak ties. *American Journal of Sociology*,
 78(6), 1360–1380.
+
+Jeong H., Néda Z. & Barabási A.-L. (2003). Measuring preferential attachment in evolving
+networks. *Europhysics Letters*, 61(4), 567–572.
 
 Krings G., Calabrese F., Ratti C. & Blondel V. D. (2009). Urban gravity: a model for
 inter-city telecommunication flows. *Journal of Statistical Mechanics*, L07003.

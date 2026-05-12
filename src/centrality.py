@@ -666,6 +666,87 @@ def compute_bb_fitness(
     return df_fit
 
 
+def compute_bb_fitness_events(
+    G: nx.Graph,
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Estimate Bianconi–Barabási fitness for each event in an event-level network.
+
+    Equivalent to :func:`compute_bb_fitness` but for networks where nodes are
+    individual earthquakes (BP, ZBZ, ETAS, TL, HVG) rather than spatial cells.
+    Node *i* in *G* corresponds to row *i* of *df* (0-indexed, catalog sorted
+    by time).  The fitness estimator is
+
+    .. math::
+
+        \\hat{\\beta}_i = \\frac{\\ln k_i(T)}{\\ln(T / t_i)},
+
+    where :math:`t_i` is the time of event *i* and :math:`T` is the catalog
+    duration.
+
+    Parameters
+    ----------
+    G : nx.Graph
+        Event-level network (directed or undirected). Node IDs are integers
+        0…N-1 matching the time-sorted DataFrame row order.
+    df : pd.DataFrame
+        Earthquake catalog **sorted by time**, with columns ``time``,
+        ``latitude``, ``longitude``.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per node with columns ``cell_id`` (node index), ``lat``,
+        ``lon``, ``k_final``, ``t_birth_days``, ``fitness_beta``.
+        Nodes with k ≤ 1, t_i = 0 (first event), or born in the last 5 %
+        of the catalog are excluded.
+
+    References
+    ----------
+    Bianconi G. & Barabási A.-L. (2001). Competition and multiscaling in
+    evolving networks. *Europhysics Letters*, 54(4), 436–442.
+    """
+    df_s = df.sort_values("time").reset_index(drop=True)
+    times = pd.to_datetime(df_s["time"])
+    t_start = times.iloc[0]
+    t_end   = times.iloc[-1]
+    T_days  = (t_end - t_start).total_seconds() / 86400.0
+    t_days  = (times - t_start).dt.total_seconds() / 86400.0
+
+    degrees = dict(G.degree())
+    rows = []
+    for node in G.nodes():
+        if node >= len(df_s):
+            continue
+        ti = float(t_days.iloc[node])
+        k  = degrees.get(node, 0)
+        if k <= 1 or ti <= 0 or ti >= 0.95 * T_days:
+            continue
+        ratio = T_days / ti
+        if ratio <= 1.0:
+            continue
+        beta = np.log(k) / np.log(ratio)
+        rows.append({
+            "cell_id":      node,
+            "lat":          float(df_s["latitude"].iloc[node]),
+            "lon":          float(df_s["longitude"].iloc[node]),
+            "k_final":      k,
+            "t_birth_days": ti,
+            "fitness_beta": float(beta),
+        })
+
+    df_fit = pd.DataFrame(rows)
+    log.info(
+        "BB fitness (events): %d nodes; β range [%.3f, %.3f]; T=%.0f days",
+        len(df_fit),
+        df_fit["fitness_beta"].min() if len(df_fit) else 0.0,
+        df_fit["fitness_beta"].max() if len(df_fit) else 0.0,
+        T_days,
+    )
+    return df_fit
+
+
 def plot_bb_fitness(
     df_fit: pd.DataFrame,
     title: str = "",
@@ -777,6 +858,126 @@ def plot_bb_fitness(
     plt.tight_layout()
     if save:
         savefig(f"bb_fitness_{_slug(title)}")
+    plt.show()
+
+
+def plot_bb_fitness_theory(
+    df_fit: pd.DataFrame,
+    gamma: float,
+    title: str = "",
+    save: bool = True,
+) -> None:
+    """
+    Compare the observed β̂ distribution against three Bianconi-Barabási regimes.
+
+    The BB model predicts different fitness distributions depending on ρ(η):
+
+    * **Equal fitness** ρ(η) = δ(η − 1) reproduces Barabási-Albert with γ = 3.
+      All cells have the same growth exponent β = ½ (vertical dashed line).
+
+    * **Uniform fitness** ρ(η) = U[0, 1] produces a degree distribution
+      :math:`p_k \\propto k^{-(1+C)}/\\ln k` with :math:`C \\approx 1.255`
+      (Bianconi & Barabási 2001).  The β̂ values are approximately uniformly
+      distributed on :math:`[0,\\,(\\gamma-1)]` (shown as a shaded band).
+
+    * **Bose-Einstein condensation**: one cell captures a finite fraction of
+      all edges.  Empirically this appears as an isolated large-β̂ outlier far
+      above the bulk distribution.
+
+    The observed γ from the degree distribution is used to estimate C = 1/(γ-1)
+    and the upper bound of the uniform-fitness prediction β_max = γ − 1.
+
+    Parameters
+    ----------
+    df_fit : pd.DataFrame
+        Output of :func:`compute_bb_fitness`.
+    gamma : float
+        Observed power-law exponent of the degree distribution (MLE estimate).
+    title : str
+        Figure title suffix.
+    save : bool
+        Whether to save the figure.
+
+    References
+    ----------
+    Bianconi G. & Barabási A.-L. (2001). Competition and multiscaling in
+    evolving networks. *Europhysics Letters* 54, 436–442.
+
+    Bianconi G. & Barabási A.-L. (2001). Bose-Einstein condensation in
+    complex networks. *Physical Review Letters* 86, 5632–5635.
+    """
+    from scipy.stats import gaussian_kde  # noqa: PLC0415
+
+    if df_fit.empty:
+        log.warning("plot_bb_fitness_theory: empty DataFrame, skipping.")
+        return
+
+    beta = df_fit["fitness_beta"].values
+
+    # Theoretical parameters
+    beta_BA   = 0.5             # equal-fitness (BA) prediction: k(T) ~ (T/t)^{1/2}
+    beta_max  = float(gamma - 1.0) if gamma > 1.0 else 1.0  # uniform-fitness upper bound
+    C_uniform = 1.255           # self-consistency constant for U[0,1] fitness
+
+    # Condensation: top-1 % β̂ relative to median
+    beta_99 = float(np.percentile(beta, 99))
+    beta_med = float(np.median(beta))
+    condensation_ratio = beta_99 / beta_med if beta_med > 0 else np.nan
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+
+    # Observed histogram + KDE
+    ax.hist(beta, bins=50, density=True, color="steelblue", alpha=0.45,
+            edgecolor="white", linewidth=0.4, label="Observed ρ(β̂)")
+    kde_x = np.linspace(beta.min(), max(beta.max(), beta_max * 1.1), 400)
+    kde_y = gaussian_kde(beta)(kde_x)
+    ax.plot(kde_x, kde_y, color="steelblue", linewidth=2.0, label="Observed KDE")
+
+    # Equal-fitness prediction (BA regime)
+    ax.axvline(beta_BA, color="green", linewidth=2.0, linestyle="--",
+               label=rf"Equal fitness (BA): $\beta = {beta_BA:.2f}$, $\gamma = 3$")
+
+    # Uniform-fitness prediction band [0, beta_max]
+    if beta_max > 0:
+        density_unif = 1.0 / beta_max  # uniform density on [0, beta_max]
+        ax.fill_betweenx([0, density_unif * 1.05], 0, beta_max,
+                         color="tomato", alpha=0.15, label=None)
+        ax.hlines(density_unif, 0, beta_max, colors="tomato", linewidths=1.8,
+                  linestyles="-",
+                  label=rf"Uniform fitness: $U[0,\,{beta_max:.2f}]$, "
+                        rf"$\gamma={gamma:.2f}$")
+        ax.axvline(beta_max, color="tomato", linewidth=1.2, linestyle=":",
+                   alpha=0.7)
+
+    # Condensation indicator
+    ax.axvline(beta_99, color="purple", linewidth=1.4, linestyle="-.",
+               label=rf"99th pct β̂ = {beta_99:.2f}  (ratio to median: {condensation_ratio:.1f}×)")
+
+    # Verdict
+    dist_to_BA    = abs(float(np.median(beta)) - beta_BA)
+    spread_rel    = float(beta.std()) / beta_BA if beta_BA > 0 else np.nan
+    if condensation_ratio > 5.0:
+        verdict = "possible Bose-Einstein condensation (extreme outlier)"
+    elif dist_to_BA < 0.15 and spread_rel < 0.4:
+        verdict = "consistent with equal-fitness / BA regime"
+    elif float(np.median(beta)) < beta_max * 0.9:
+        verdict = "consistent with heterogeneous fitness (uniform/mixed regime)"
+    else:
+        verdict = "intermediate regime"
+
+    ax.set_xlabel(r"Fitness $\hat{\beta}_i$", fontsize=12)
+    ax.set_ylabel(r"Density $\rho(\hat{\beta})$", fontsize=12)
+    ax.set_title(
+        f"BB fitness regime analysis — {title}\n"
+        f"γ = {gamma:.2f}, median β̂ = {beta_med:.3f} → {verdict}",
+        fontsize=11,
+    )
+    ax.legend(fontsize=9, loc="upper right")
+    ax.grid(True, linestyle="--", alpha=0.3)
+    ax.set_xlim(left=0)
+    plt.tight_layout()
+    if save:
+        savefig(f"bb_fitness_theory_{_slug(title)}")
     plt.show()
 
 
