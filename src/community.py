@@ -67,6 +67,7 @@ def run_consensus_louvain(
     G: nx.Graph,
     n_runs: int = 100,
     seed: int = 42,
+    max_nodes: int = 50_000,
 ) -> Partition:
     """
     Consensus Louvain: run Louvain n_runs times, build a co-occurrence matrix,
@@ -77,6 +78,10 @@ def run_consensus_louvain(
     ``n_clusters`` equal to the median number of Louvain communities removes
     the stochasticity that makes single-run Louvain unreliable.
 
+    For graphs with more than ``max_nodes`` nodes the N×N co-occurrence matrix
+    would be prohibitively large (e.g. 173 GiB for N=215k). In that case the
+    function falls back to a single Louvain run.
+
     Parameters
     ----------
     G : nx.Graph
@@ -85,6 +90,9 @@ def run_consensus_louvain(
         Number of independent Louvain runs (≥ 50 recommended).
     seed : int
         Base seed; each run uses ``seed + run_index``.
+    max_nodes : int
+        Maximum graph size for full consensus. Larger graphs fall back to
+        single Louvain. Default 50_000.
 
     Returns
     -------
@@ -92,8 +100,20 @@ def run_consensus_louvain(
         ``{node_id: community_int}`` mapping.
     """
     nodes = list(G.nodes())
-    idx = {n: i for i, n in enumerate(nodes)}
     n = len(nodes)
+
+    if n > max_nodes:
+        mem_gib = n * n * 4 / 1024**3
+        log.warning(
+            "Consensus Louvain skipped: N=%d > max_nodes=%d "
+            "(co-occurrence matrix would require %.0f GiB). "
+            "Falling back to single Louvain run.",
+            n, max_nodes, mem_gib,
+        )
+        comms = nx.community.louvain_communities(G, seed=seed)
+        return {v: i for i, members in enumerate(comms) for v in members}
+
+    idx = {node: i for i, node in enumerate(nodes)}
     co = np.zeros((n, n), dtype=np.float32)
     k_counts = []
 

@@ -19,6 +19,7 @@ def plot_degree_distribution_linear(
     title: str,
     max_degree: int = 50,
     save: bool = True,
+    weighted: bool = True,
 ) -> None:
     """
     Bar chart of in- and out-degree distributions (log y-axis, linear x-axis).
@@ -31,23 +32,33 @@ def plot_degree_distribution_linear(
         Figure title suffix.
     max_degree : int
         Degree values are capped at this value before plotting.
+    weighted : bool
+        If True, use weighted degree (``weight="weight"``). Set False for
+        graphs where edge weights are not transition counts (e.g. BP, TL).
     """
     def _prob_dist(degrees: list, max_k: int):
         arr = np.clip(np.array([d for d in degrees if d > 0]), 0, max_k)
         counts = pd.Series(arr).value_counts().sort_index()
         return counts.index.values, counts.values / len(arr)
 
-    k_in,  P_in  = _prob_dist([d for _, d in G.in_degree(weight="weight")],  max_degree)
-    k_out, P_out = _prob_dist([d for _, d in G.out_degree(weight="weight")], max_degree)
-
+    w = "weight" if weighted else None
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.bar(k_in,        P_in,  color="dodgerblue", alpha=0.5, label="In-Degree",  width=0.8)
-    ax.bar(k_out + 0.2, P_out, color="salmon",     alpha=0.5, label="Out-Degree", width=0.8)
+
+    if G.is_directed():
+        k_in,  P_in  = _prob_dist([d for _, d in G.in_degree(weight=w)],  max_degree)
+        k_out, P_out = _prob_dist([d for _, d in G.out_degree(weight=w)], max_degree)
+        ax.bar(k_in,        P_in,  color="dodgerblue", alpha=0.5, label="In-Degree",  width=0.8)
+        ax.bar(k_out + 0.2, P_out, color="salmon",     alpha=0.5, label="Out-Degree", width=0.8)
+        ax.set_title(f"In vs Out Degree Distribution (capped at {max_degree}): {title}", fontsize=15)
+        ax.legend(fontsize=11)
+    else:
+        k, P = _prob_dist([d for _, d in G.degree(weight=w)], max_degree)
+        ax.bar(k, P, color="dodgerblue", alpha=0.7, width=0.8)
+        ax.set_title(f"Degree Distribution (capped at {max_degree}): {title}", fontsize=15)
+
     ax.set_yscale("log")
-    ax.set_title(f"In vs Out Degree Distribution (capped at {max_degree}): {title}", fontsize=15)
     ax.set_xlabel("Degree $k$", fontsize=13)
     ax.set_ylabel("Probability $P(k)$", fontsize=13)
-    ax.legend(fontsize=11)
     ax.grid(True, linestyle="--", alpha=0.6)
     plt.tight_layout()
     if save:

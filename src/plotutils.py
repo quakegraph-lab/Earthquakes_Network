@@ -9,15 +9,17 @@ Usage in every script
 
 2. After imports, call once:
        setup_matplotlib()
-       configure_saves(SAVE_JPG, SAVE_PDF, RESULTS_DIR / "figures" / "<catalog>")
-       # <catalog> is "italy", "us", or "comparison"
+       configure_saves(SAVE_JPG, SAVE_PDF, RESULTS_DIR / "figures" / "<country>" / "<method>")
+       # country: "italy", "us", "japan", "comparison"
+       # method:  "abe", "bp", "tl", "preanalysis"  (omit for "comparison")
 
 3. In src/ functions, pass save=True (the default) to enable saving.
    Pass save=False to skip saving for that particular call.
 
 Folder layout created automatically:
-    results/figures/<catalog>/pdf/
-    results/figures/<catalog>/jpg/
+    results/figures/<country>/<method>/pdf/
+    results/figures/<country>/<method>/jpg/
+    results/figures/<country>/<method>/html/   (Plotly maps, created on demand)
 """
 
 import logging
@@ -78,8 +80,8 @@ def configure_saves(
     save_pdf : bool
         Save vector PDF copies of every figure.
     figures_dir : Path
-        Root directory for this catalog's figures, e.g.
-        ``RESULTS_DIR / "figures" / "italy"``.
+        Root directory for this script's figures, e.g.
+        ``RESULTS_DIR / "figures" / "italy" / "abe"``.
         Sub-directories ``pdf/`` and ``jpg/`` are created automatically.
     """
     global _SAVE_JPG, _SAVE_PDF, _FIGURES_DIR
