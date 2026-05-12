@@ -1,15 +1,19 @@
 """
 Centrality computation and comparison for the Abe-Suzuki earthquake network.
 
-Computes all 8 measures in a single function, returns a unified DataFrame,
+Computes 13 measures in a single function, returns a unified DataFrame,
 and provides two diagnostic visualisations:
   1. Spearman rank-correlation heatmap across measures.
   2. Multi-panel top-N cell bar chart per measure.
 
 Measures and seismological interpretations
 ------------------------------------------
-Degree       — most seismically active cells (highest transition count).
+In_Degree    — susceptibility: how often a cell is triggered by others.
+Out_Degree   — productivity: how many distinct cells a cell triggers.
+Degree       — total activity (in + out), most seismically active cells.
 PageRank     — "stress sinks": cells that persistently receive seismic flow.
+Harmonic     — topological reach via sum of inverse distances; handles
+               disconnected nodes gracefully (closeness is 0 for unreachable nodes).
 Closeness    — cells that can spread seismic influence fastest across the network.
 Betweenness  — "bridges": cells on shortest paths between fault clusters.
 Eigenvector  — cells embedded in the high-activity core (rich-club).
@@ -18,6 +22,17 @@ Katz         — like eigenvector but counts ALL paths (with exponential decay),
 HITS Hub     — cells that trigger important seismic zones (high out-connections
                to high-authority cells).
 HITS Auth    — cells that are the primary destinations of seismic propagation.
+Clustering   — local clustering coefficient: fraction of a cell's neighbours
+               that are also mutually connected; high at fault junctions.
+Triangles    — raw triangle count per node (undirected); zero in a perfect tree,
+               high at fault intersections and dense aftershock clusters.
+
+Bianconi-Barabasi fitness
+-------------------------
+compute_bb_fitness estimates the growth-rate exponent beta_i for each cell
+from its final degree and birth time (first recorded event in that cell).
+plot_bb_fitness shows the fitness distribution, growth diagram, and Lorenz
+condensation curve. plot_bb_fitness_geo maps fitness geographically.
 """
 
 import logging
@@ -37,18 +52,24 @@ from src.plotutils import savefig, save_plotly, _slug
 log = logging.getLogger(__name__)
 
 _METRICS = [
-    "Degree", "PageRank", "Closeness", "Betweenness",
-    "Eigenvector", "Katz", "HITS_Hub", "HITS_Auth",
+    "In_Degree", "Out_Degree", "Degree", "PageRank",
+    "Harmonic", "Closeness", "Betweenness", "Eigenvector",
+    "Katz", "HITS_Hub", "HITS_Auth", "Clustering", "Triangles",
 ]
 _LABELS = {
+    "In_Degree":   "In-Degree\n(susceptibility)",
+    "Out_Degree":  "Out-Degree\n(productivity)",
     "Degree":      "Degree\n(active cells)",
     "PageRank":    "PageRank\n(stress sinks)",
+    "Harmonic":    "Harmonic\n(topological reach)",
     "Closeness":   "Closeness\n(global spread)",
     "Betweenness": "Betweenness\n(fault bridges)",
     "Eigenvector": "Eigenvector\n(rich-club core)",
     "Katz":        "Katz\n(all-path influence)",
     "HITS_Hub":    "HITS Hub\n(seismic triggers)",
     "HITS_Auth":   "HITS Authority\n(seismic destinations)",
+    "Clustering":  "Clustering\n(local density)",
+    "Triangles":   "Triangles\n(fault junctions)",
 }
 
 
@@ -101,10 +122,12 @@ def compute_all_centralities(
     G_nsl = G.copy()
     G_nsl.remove_edges_from(nx.selfloop_edges(G_nsl))
 
-    # ── 1. Degree ────────────────────────────────────────────────────────────
-    log.info("Degree centrality...")
+    # ── 1. In-degree / Out-degree / Total degree ─────────────────────────────
+    log.info("Degree centralities (in, out, total)...")
     t0 = time.time()
-    deg_cent = nx.degree_centrality(G)
+    in_deg_cent  = nx.in_degree_centrality(G)
+    out_deg_cent = nx.out_degree_centrality(G)
+    deg_cent     = nx.degree_centrality(G)
     log.info("  %.1fs", time.time() - t0)
 
     # ── 2. PageRank ──────────────────────────────────────────────────────────
@@ -113,7 +136,13 @@ def compute_all_centralities(
     pr_cent = nx.pagerank(G, weight="weight")
     log.info("  %.1fs", time.time() - t0)
 
-    # ── 3. Closeness ─────────────────────────────────────────────────────────
+    # ── 3. Harmonic ──────────────────────────────────────────────────────────
+    log.info("Harmonic centrality...")
+    t0 = time.time()
+    harm_cent = nx.harmonic_centrality(G)
+    log.info("  %.1fs", time.time() - t0)
+
+    # ── 4. Closeness ─────────────────────────────────────────────────────────
     log.info("Closeness centrality...")
     t0 = time.time()
     close_cent = nx.closeness_centrality(G)
@@ -150,7 +179,19 @@ def compute_all_centralities(
         katz_cent = nx.katz_centrality_numpy(G, alpha=alpha_katz, weight="weight")
     log.info("  %.1fs  alpha=%.2e", time.time() - t0, alpha_katz)
 
-    # ── 7 & 8. HITS hub + authority ──────────────────────────────────────────
+    # ── 9. Clustering coefficient (undirected, weighted) ─────────────────────
+    log.info("Clustering coefficient...")
+    t0 = time.time()
+    clust_cent = nx.clustering(G_und, weight="weight")
+    log.info("  %.1fs", time.time() - t0)
+
+    # ── 10. Triangle count (undirected) ──────────────────────────────────────
+    log.info("Triangle count...")
+    t0 = time.time()
+    tri_count = nx.triangles(G_und)
+    log.info("  %.1fs", time.time() - t0)
+
+    # ── 11 & 12. HITS hub + authority ────────────────────────────────────────
     log.info("HITS (hub + authority)...")
     t0 = time.time()
     try:
@@ -163,20 +204,36 @@ def compute_all_centralities(
     log.info("  %.1fs", time.time() - t0)
 
     # ── Assemble DataFrame ───────────────────────────────────────────────────
+    def _depth(node):
+        d = G.nodes[node].get("depth_km")
+        if d is not None:
+            return float(d)
+        if isinstance(node, (tuple, list)):
+            return float(node[2]) * cell_size_km
+        try:
+            return float(str(node).split("_")[2]) * cell_size_km
+        except (IndexError, ValueError):
+            return 0.0
+
     rows = [
         {
             "cell_id":     node,
             "lat":         G.nodes[node]["lat"],
             "lon":         G.nodes[node]["lon"],
-            "depth_km":    float(node.split("_")[2]) * cell_size_km,
+            "depth_km":    _depth(node),
+            "In_Degree":   in_deg_cent.get(node, 0.0),
+            "Out_Degree":  out_deg_cent.get(node, 0.0),
             "Degree":      deg_cent.get(node, 0.0),
             "PageRank":    pr_cent.get(node, 0.0),
+            "Harmonic":    harm_cent.get(node, 0.0),
             "Closeness":   close_cent.get(node, 0.0),
             "Betweenness": bet_cent.get(node, 0.0),
             "Eigenvector": eig_cent.get(node, 0.0),
             "Katz":        katz_cent.get(node, 0.0),
             "HITS_Hub":    hits_hub.get(node, 0.0),
             "HITS_Auth":   hits_auth.get(node, 0.0),
+            "Clustering":  clust_cent.get(node, 0.0),
+            "Triangles":   float(tri_count.get(node, 0)),
         }
         for node in G.nodes()
         if "lat" in G.nodes[node] and "lon" in G.nodes[node]
@@ -204,7 +261,8 @@ def plot_centrality_correlation(df: pd.DataFrame, title: str = "", save: bool = 
     available = [m for m in _METRICS if m in df.columns]
     corr = df[available].corr(method="spearman")
 
-    fig, ax = plt.subplots(figsize=(9, 7))
+    sz = max(7, len(available) * 0.8)
+    fig, ax = plt.subplots(figsize=(sz + 1, sz))
     sns.heatmap(
         corr,
         annot=True, fmt=".2f",
@@ -479,4 +537,302 @@ def plot_geo_centrality_overlap(
     )
     if save:
         save_plotly(fig, f"centrality_geo_overlap_{_slug(title)}")
+    fig.show()
+
+
+# ── Bianconi–Barabási fitness ─────────────────────────────────────────────────
+
+def compute_bb_fitness(
+    G: nx.DiGraph,
+    df: pd.DataFrame,
+    cell_size_km: float = 10.0,
+    target_crs: str = "epsg:5070",
+) -> pd.DataFrame:
+    """
+    Estimate Bianconi–Barabási fitness for each spatial cell.
+
+    In the Bianconi–Barabási (2001) model, new nodes attach to existing nodes
+    with probability proportional to both degree *and* an intrinsic fitness
+    :math:`\\eta_i`:
+
+    .. math::
+
+        \\pi_i \\propto \\eta_i\\, k_i.
+
+    Under this rule the degree of node :math:`i`, born at time :math:`t_i`,
+    grows as
+
+    .. math::
+
+        k_i(t) \\approx m\\left(\\frac{t}{t_i}\\right)^{\\beta_i},
+        \\qquad \\beta_i = \\frac{\\eta_i}{C},
+
+    where :math:`C = \\int \\eta\\,\\rho(\\eta)\\,\\beta(\\eta)\\,d\\eta` is a
+    self-consistency constant and :math:`m` is the number of edges added per
+    new node.  The empirical estimate
+
+    .. math::
+
+        \\hat{\\beta}_i = \\frac{\\ln k_i(T)}{\\ln(T / t_i)}
+
+    follows directly from the power-law growth equation.
+    :math:`\\hat{\\beta}_i` is proportional to :math:`\\eta_i` up to the common
+    factor :math:`C`; it therefore provides a relative ranking of cell fitness.
+
+    **Seismological interpretation.** A cell with high :math:`\\hat{\\beta}`
+    acquired connections rapidly after its first recorded event — it is an
+    *intrinsically productive* fault zone whose seismogenic rate is not merely
+    a consequence of being old (first-mover advantage) but of a high intrinsic
+    activity level.  **Bose-Einstein condensation** occurs when one cell
+    captures a finite fraction of all edges; this is the network-theoretic
+    signature of a dominant seismogenic zone (e.g. The Geysers geothermal
+    field in the US catalog, or the central Apennines corridor in Italy).
+
+    Parameters
+    ----------
+    G : nx.DiGraph
+        The Abe–Suzuki cell-transition network (10 km resolution recommended).
+    df : pd.DataFrame
+        Raw earthquake catalog with columns ``time``, ``latitude``,
+        ``longitude``, ``depth_km``.  Need not be pre-sorted.
+    cell_size_km : float
+        Grid resolution; must match the resolution used to build *G*.
+    target_crs : str
+        Projection CRS; must match the one used to build *G*.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per cell with columns ``cell_id``, ``lat``, ``lon``,
+        ``k_final``, ``t_birth_days``, ``fitness_beta``.
+        Cells with :math:`k \\leq 1` or born in the last 5 % of the catalog
+        are excluded (undefined logarithm or insufficient growth time).
+
+    References
+    ----------
+    Bianconi G. & Barabási A.-L. (2001). Competition and multiscaling in
+    evolving networks. *Europhysics Letters*, 54(4), 436–442.
+
+    Bianconi G. & Barabási A.-L. (2001). Bose-Einstein condensation in
+    complex networks. *Physical Review Letters*, 86(24), 5632–5635.
+    """
+    from src.network import discretize_space_3d  # noqa: PLC0415
+
+    df_s = df.sort_values("time").reset_index(drop=True)
+    df_grid = discretize_space_3d(df_s, cell_size_km=cell_size_km, target_crs=target_crs)
+
+    times = pd.to_datetime(df_s["time"])
+    t_start = times.iloc[0]
+    t_end   = times.iloc[-1]
+    T_days  = (t_end - t_start).total_seconds() / 86400.0
+
+    df_grid = df_grid.copy()
+    df_grid["t_days"] = (times - t_start).dt.total_seconds() / 86400.0
+
+    first_t = df_grid.groupby("cell_id")["t_days"].min()
+
+    degrees = dict(G.degree())
+
+    rows = []
+    for node in G.nodes():
+        if node not in first_t.index:
+            continue
+        ti = float(first_t[node])
+        k  = degrees.get(node, 0)
+        # skip: no growth data, too young, or trivial degree
+        if k <= 1 or ti <= 0 or ti >= 0.95 * T_days:
+            continue
+        ratio = T_days / ti
+        if ratio <= 1.0:
+            continue
+        beta = np.log(k) / np.log(ratio)
+        rows.append({
+            "cell_id":      node,
+            "lat":          G.nodes[node].get("lat"),
+            "lon":          G.nodes[node].get("lon"),
+            "k_final":      k,
+            "t_birth_days": ti,
+            "fitness_beta": float(beta),
+        })
+
+    df_fit = pd.DataFrame(rows)
+    log.info(
+        "BB fitness: %d cells; β range [%.3f, %.3f]; T=%.0f days",
+        len(df_fit),
+        df_fit["fitness_beta"].min() if len(df_fit) else 0,
+        df_fit["fitness_beta"].max() if len(df_fit) else 0,
+        T_days,
+    )
+    return df_fit
+
+
+def plot_bb_fitness(
+    df_fit: pd.DataFrame,
+    title: str = "",
+    save: bool = True,
+) -> None:
+    """
+    Three-panel diagnostic for Bianconi–Barabási fitness.
+
+    **Panel 1 — Fitness distribution ρ(β).**  Histogram of :math:`\\hat{\\beta}`
+    values with KDE overlay.  A broad distribution indicates heterogeneous
+    seismogenic potential; a narrow peak near :math:`\\beta \\approx 0` signals
+    near-uniform fitness (standard Barabási–Albert behaviour).
+
+    **Panel 2 — Growth diagram.**  :math:`\\ln k_i` vs :math:`\\ln(T/t_i)`,
+    coloured by :math:`\\hat{\\beta}`.  Under pure preferential attachment
+    (uniform fitness) all points lie on a single line of slope :math:`\\bar{\\beta}`;
+    scatter above the line identifies high-fitness outliers.
+
+    **Panel 3 — Condensation Lorenz curve.**  Cells sorted by
+    :math:`\\hat{\\beta}` descending; cumulative share of total degree (y-axis)
+    vs cumulative fraction of cells (x-axis).  Perfect equality = diagonal
+    (standard BA); a convex curve bowing toward the top-left corner indicates
+    degree concentration in the high-fitness minority — the network-theoretic
+    signature of Bose-Einstein condensation.
+
+    Parameters
+    ----------
+    df_fit : pd.DataFrame
+        Output of :func:`compute_bb_fitness`.
+    title : str
+        Figure title suffix.
+
+    References
+    ----------
+    Bianconi G. & Barabási A.-L. (2001). Bose-Einstein condensation in
+    complex networks. *Physical Review Letters*, 86, 5632–5635.
+    """
+    if df_fit.empty:
+        log.warning("plot_bb_fitness: empty DataFrame, skipping.")
+        return
+
+    beta  = df_fit["fitness_beta"].values
+    k     = df_fit["k_final"].values
+    ti    = df_fit["t_birth_days"].values
+    T_max = ti.max() / (1 - 0.05)   # approximate T from max birth time
+
+    log_k    = np.log(k)
+    log_ratio = np.log(T_max / ti)
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+
+    # ── Panel 1: fitness distribution ────────────────────────────────────────
+    ax = axes[0]
+    ax.hist(beta, bins=40, color="steelblue", alpha=0.7, edgecolor="white",
+            linewidth=0.4, density=True, label="ρ(β) histogram")
+    from scipy.stats import gaussian_kde
+    kde_x = np.linspace(beta.min(), beta.max(), 300)
+    kde_y = gaussian_kde(beta)(kde_x)
+    ax.plot(kde_x, kde_y, "r-", linewidth=1.8, label="KDE")
+    ax.axvline(float(np.median(beta)), color="gray", linestyle="--",
+               linewidth=1.2, label=f"Median β = {np.median(beta):.3f}")
+    ax.set_xlabel("Fitness β̂", fontsize=11)
+    ax.set_ylabel("Density", fontsize=11)
+    ax.set_title("Fitness distribution ρ(β)", fontsize=11)
+    ax.legend(fontsize=9)
+    ax.grid(True, linestyle="--", alpha=0.3)
+
+    # ── Panel 2: growth diagram ───────────────────────────────────────────────
+    ax = axes[1]
+    sc = ax.scatter(log_ratio, log_k, c=beta, cmap="plasma", s=8, alpha=0.6)
+    # reference line: pure BA (slope = mean beta)
+    mean_beta = float(np.mean(beta))
+    x_line = np.array([log_ratio.min(), log_ratio.max()])
+    ax.plot(x_line, mean_beta * x_line, "w--", linewidth=1.5, alpha=0.8,
+            label=f"BA reference (β̄ = {mean_beta:.3f})")
+    cbar = fig.colorbar(sc, ax=ax, pad=0.02)
+    cbar.set_label("Fitness β̂", fontsize=9)
+    ax.set_xlabel("ln(T / t_i)  [network age ratio]", fontsize=11)
+    ax.set_ylabel("ln(k_i)  [log degree]", fontsize=11)
+    ax.set_title("Growth diagram", fontsize=11)
+    ax.legend(fontsize=9)
+    ax.grid(True, linestyle="--", alpha=0.3)
+
+    # ── Panel 3: Lorenz / condensation curve ─────────────────────────────────
+    ax = axes[2]
+    sort_idx  = np.argsort(beta)[::-1]   # descending fitness
+    k_sorted  = k[sort_idx]
+    cum_k     = np.cumsum(k_sorted) / k_sorted.sum()
+    cum_cells = np.arange(1, len(k_sorted) + 1) / len(k_sorted)
+    ax.plot(cum_cells, cum_k, color="tomato", linewidth=2,
+            label="Empirical Lorenz curve")
+    ax.plot([0, 1], [0, 1], "k--", linewidth=1.2, alpha=0.6, label="Perfect equality (BA)")
+    # Gini coefficient as annotation
+    gini = 1 - 2 * np.trapz(cum_k, cum_cells)
+    ax.text(0.05, 0.92, f"Gini = {gini:.3f}", transform=ax.transAxes,
+            fontsize=10, bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8))
+    ax.set_xlabel("Cumulative fraction of cells\n(sorted by β̂ desc.)", fontsize=11)
+    ax.set_ylabel("Cumulative degree share", fontsize=11)
+    ax.set_title("Condensation Lorenz curve", fontsize=11)
+    ax.legend(fontsize=9)
+    ax.grid(True, linestyle="--", alpha=0.3)
+
+    fig.suptitle(
+        f"Bianconi–Barabási fitness — {title}\n"
+        f"n={len(df_fit)} cells, β̄={mean_beta:.3f}, "
+        f"top-1% hold {100*cum_k[max(0,int(0.01*len(cum_k))-1)]:.1f}% of degree",
+        fontsize=12,
+    )
+    plt.tight_layout()
+    if save:
+        savefig(f"bb_fitness_{_slug(title)}")
+    plt.show()
+
+
+def plot_bb_fitness_geo(
+    df_fit: pd.DataFrame,
+    title: str = "",
+    center_lat: float = 41.9,
+    center_lon: float = 12.5,
+    zoom: float = 0,
+    bounds: dict | None = None,
+    height: int = 600,
+    width: int = 900,
+    save: bool = True,
+) -> None:
+    """
+    Interactive geographic map of Bianconi–Barabási fitness β̂.
+
+    Marker colour encodes fitness :math:`\\hat{\\beta}`; marker size encodes
+    the final degree :math:`k_i`.  High-fitness cells (warm colours, large
+    markers) are intrinsically productive fault zones whose seismogenic rate
+    cannot be attributed to seniority alone.
+
+    Parameters
+    ----------
+    df_fit : pd.DataFrame
+        Output of :func:`compute_bb_fitness`.
+    """
+    if df_fit.empty:
+        log.warning("plot_bb_fitness_geo: empty DataFrame, skipping.")
+        return
+
+    df_plot = df_fit.dropna(subset=["lat", "lon"]).copy()
+    df_plot = df_plot.sort_values("fitness_beta", ascending=True)
+
+    fig = px.scatter_map(
+        df_plot,
+        lat="lat",
+        lon="lon",
+        color="fitness_beta",
+        size="k_final",
+        size_max=20,
+        color_continuous_scale="plasma",
+        hover_name="cell_id",
+        hover_data={"k_final": True, "t_birth_days": ":.0f", "fitness_beta": ":.4f"},
+        map_style="carto-positron",
+        title=f"Bianconi–Barabási Fitness β̂ — {title}",
+    )
+    map_cfg: dict = {"center": {"lat": center_lat, "lon": center_lon}, "zoom": zoom}
+    if bounds is not None:
+        map_cfg["bounds"] = bounds
+    fig.update_layout(
+        margin={"r": 0, "t": 50, "l": 0, "b": 0},
+        width=width, height=height,
+        coloraxis_colorbar=dict(title="Fitness β̂"),
+        map=map_cfg,
+    )
+    if save:
+        save_plotly(fig, f"bb_fitness_geo_{_slug(title)}")
     fig.show()

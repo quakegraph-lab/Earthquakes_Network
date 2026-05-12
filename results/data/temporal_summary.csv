@@ -1,8 +1,0 @@
-metric,italy,us
-Mean γ,1.9604,1.7442
-γ std dev,0.1453,0.0334
-Mean C,0.1162,0.281
-Mean L,3.8609,3.0689
-Mean community NMI,0.0949,0.0316
-Mean hub Jaccard,0.0,0.0073
-Mean edge Jaccard,0.0012,0.0023

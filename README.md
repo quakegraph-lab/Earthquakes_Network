@@ -112,33 +112,48 @@ on degree distribution, clustering coefficient, average path length, and modular
 
 ### Centrality Analysis
 
-Eight complementary centrality measures are computed on the directed, weighted 10 km
+Thirteen complementary centrality measures are computed on the directed, weighted 10 km
 network. Each quantifies a distinct notion of importance within the stress-transfer
 topology:
 
 | Measure | Seismological interpretation |
 |---------|------------------------------|
-| Degree | Seismic activity rate of a cell — the most visited fault segments |
-| PageRank | Steady-state stress-sink: cells that persistently receive seismic flow |
+| In-Degree | *Susceptibility*: how often a cell is triggered by predecessor cells |
+| Out-Degree | *Productivity*: how many distinct cells a cell triggers (aftershock output) |
+| Degree | Total seismic activity rate — the most visited fault segments |
+| PageRank | Steady-state stress-sink: cells that persistently receive seismic flow from well-connected predecessors |
+| Harmonic | Topological reach via sum of inverse distances; handles disconnected nodes gracefully (closeness = 0 for unreachable nodes) |
 | Closeness | Broadcast speed: cells from which influence propagates most rapidly across the network |
 | Betweenness | Fault bridges: cells that mediate stress transfer between otherwise disconnected clusters |
 | Eigenvector | Rich-club core: cells embedded in the most densely active neighbourhood |
 | Katz | Indirect influence along all directed paths, with exponential length decay |
 | HITS Hub score | Seismic triggers: cells whose activity tends to activate high-authority destinations |
 | HITS Authority score | Primary destinations of seismic propagation chains |
+| Clustering coefficient | Local fault-junction density: fraction of a cell's neighbours that are mutually connected |
+| Triangle count | Raw feedback-loop count per cell; zero in a pure aftershock tree |
 
-Spearman rank correlations across measures identify which notions of centrality converge;
+Spearman rank correlations across all 13 measures identify which notions of centrality
+converge (high ρ, functionally redundant) vs diverge (low ρ, structurally orthogonal);
 geographic maps allow direct comparison with known fault systems.
+
+A **Bianconi–Barabási fitness** analysis follows the centrality section. The empirical
+fitness estimator β̂_i = ln(k_i(T)) / ln(T/t_i) isolates the intrinsic seismogenic
+potential of each cell from the first-mover advantage of preferential attachment. The
+Lorenz condensation curve and Gini coefficient diagnose whether one fault zone has
+captured a disproportionate share of the network's degree — the network-theoretic
+signature of Bose-Einstein condensation (Bianconi & Barabási 2001).
 
 ---
 
 ### Community Detection
 
-Four algorithms partition the network into communities — groups of cells with dense
+Seven algorithms partition the network into communities — groups of cells with dense
 internal connectivity relative to the rest of the network — each encoding a different
 notion of cohesion:
 
-- **Louvain** greedy modularity maximisation (Blondel et al. 2008).
+- **Louvain** greedy modularity maximisation (Blondel et al. 2008), implemented via the
+  Leiden algorithm (Traag, Waltman & van Eck 2019) with `leidenalg` / `igraph` for
+  guaranteed well-connected communities.
 - **Consensus Louvain** — 100 independent runs aggregated into a co-occurrence matrix;
   agglomerative clustering on the complement removes the stochastic instability of a
   single run.
@@ -147,15 +162,56 @@ notion of cohesion:
 - **InfoMap** (Rosvall & Bergstrom 2008) — minimises the description length of a random
   walk; communities are regions where the walk remains trapped. Particularly informative
   for weighted directed networks where flow dynamics matter.
+- **HDBSCAN-Spectral** (Campello et al. 2013) — density-based clustering applied in the
+  normalised Laplacian spectral embedding. Unlike the four methods above, HDBSCAN requires
+  no pre-specification of the number of communities: clusters emerge wherever the node
+  density in embedding space exceeds a local threshold, as formalised by the mutual
+  reachability distance. Noise points are assigned to the nearest cluster centroid.
+- **HDBSCAN-Geographic** — the same HDBSCAN algorithm applied to projected node
+  coordinates (kilometres), with no graph structure whatsoever. This provides a purely
+  spatial baseline: communities are geographic density concentrations of seismic cells,
+  independent of how those cells are connected.
+- **BigCLAM** (Yang & Leskovec 2013) — the only method in the suite that produces
+  *overlapping* communities. Each node holds a non-negative membership vector
+  **F**_u ∈ ℝ^K, and the probability of a link between u and v is modelled as
+  P(A_{uv}=1) = 1 − exp(−**F**_u · **F**_v). Parameters are estimated by coordinate
+  ascent on the log-likelihood. The hard partition (argmax of **F**) enters the NMI
+  comparison; the full **F** matrix reveals which cells simultaneously belong to
+  multiple fault systems. Implemented from scratch following the equations in Yang &
+  Leskovec (2013) and the educational reference implementation of Romijnders (2017).
 
-Partition agreement is quantified by Normalised Mutual Information (NMI); a 4×4 pairwise
-heatmap identifies the most structurally robust community boundaries. Directed community
-detection is performed separately using the Leiden algorithm with the Leicht–Newman
-directed modularity Q_d.
+The NMI between HDBSCAN-Spectral and HDBSCAN-Geographic is of particular scientific
+interest: high agreement would imply that network community structure is largely an
+artefact of geographic clustering; divergence — the more informative outcome — indicates
+that the network encodes fault connectivity patterns that spatial proximity alone cannot
+reproduce.
+
+Partition agreement across all seven methods is quantified by a 7×7 Normalised Mutual
+Information heatmap. Directed community detection is performed separately using the Leiden
+algorithm with the Leicht–Newman directed modularity Q_d.
+
+**Partition quality scoring.** All seven partitions are compared on a common set of nine
+quality metrics: modularity Q (Newman–Girvan), conductance φ, coverage, normalised cut
+N_cut, map equation description length L (Rosvall & Bergstrom 2008), degree-corrected SBM
+log-likelihood (Karrer & Newman 2011), Surprise (Aldecoa & Marín 2013), geographic
+compactness (mean haversine distance to community centroid, km), and depth coherence (mean
+within-community standard deviation of focal depth, km). Results are presented as a
+z-score-normalised heatmap, with metrics where lower values are better sign-reversed so
+that brighter cells uniformly indicate better partition quality. This multi-criterion
+comparison is more informative than any single measure and directly addresses whether the
+detected communities correspond to coherent seismogenic zones.
 
 *References:*  
+Aldecoa R. & Marín I. (2013). Exploring the limits of community detection strategies in
+complex networks. *Scientific Reports*, 3, 2216.  
 Blondel V. D. et al. (2008). Fast unfolding of communities in large networks. *Journal of
 Statistical Mechanics*, P10008.  
+Campello R. J. G. B., Moulavi D. & Sander J. (2013). Density-based clustering based on
+hierarchical density estimates. *PAKDD*, LNAI 7819, 160–172.  
+Karrer B. & Newman M. E. J. (2011). Stochastic blockmodels and community structure in
+networks. *Physical Review E*, 83, 016107.  
+McInnes L., Healy J. & Astels S. (2017). hdbscan: Hierarchical density based clustering.
+*Journal of Open Source Software*, 2(11), 205.  
 Rosvall M. & Bergstrom C. T. (2008). Maps of random walks on complex networks reveal
 community structure. *PNAS*, 105(4), 1118–1123.
 
@@ -169,6 +225,59 @@ cell magnitude. Degree disassortativity (*r* < 0) is a hallmark of scale-free ne
 depth and magnitude assortativity reveal whether seismicity respects crustal depth horizons
 and whether high-magnitude fault zones cluster in the network or are interspersed with
 low-magnitude activity.
+
+Three complementary diagnostics extend the scalar *r* to a richer characterisation of
+mixing structure:
+
+**Average nearest-neighbour degree k_nn(k).** Rather than a single scalar, the function
+k̄_nn(k) — the average degree of neighbours of a degree-*k* node — traces the mixing
+profile across the full degree spectrum. On log-log axes, the slope μ of a power-law fit
+k̄_nn(k) ∝ k^μ is the *degree-mixing exponent* (Pastor-Satorras, Vázquez & Vespignani
+2001). A negative μ confirms disassortativity not merely on average but monotonically
+across all degree classes; its magnitude characterises how steeply the tendency to avoid
+hubs grows with degree. The exponent μ is reported alongside Newman's *r* in the summary
+table.
+
+**Directed degree mixing.** Because the network is directed, four distinct mixing channels
+exist: out→out (do cells that trigger many events preferentially connect to other prolific
+triggers?), out→in, in→out, and in→in. These four panels, visualised as 2-D histograms in
+log-log degree space, address a question with direct seismological content: whether
+high-productivity fault cells activate other high-productivity cells or act as one-to-many
+hubs feeding seismic activity into a passive periphery (Foster et al. 2010).
+
+**Rich-club coefficient φ_norm(k).** The raw rich-club coefficient φ(k) measures the edge
+density among all nodes with degree above threshold *k*. Normalised by the expectation
+under the configuration model (obtained by averaging over 50 degree-preserving random
+rewirings), φ_norm(k) > 1 indicates rich-club ordering — hubs are more densely
+interconnected than degree alone predicts. Values φ_norm(k) < 1 across all *k* confirm
+the absence of a rich club, consistent with the hub-periphery topology expected of
+aftershock-driven networks (Colizza et al. 2006).
+
+**Depth E-I index.** The E-I index (Krackhardt & Stern 1988) partitions edges into
+External (crossing depth-layer boundaries) and Internal (within the same depth layer):
+E-I = (E − I) / (E + I) ∈ [−1, 1]. Depth layers are defined as shallow (≤ 15 km),
+intermediate (15–35 km), and deep (> 35 km), corresponding to the upper crust, lower
+crust, and upper mantle seismogenic zones. E-I < 0 (homophily) indicates that seismic
+cells predominantly trigger other cells at the same depth — evidence for depth-stratified
+fault systems with limited cross-horizon energy transfer. E-I > 0 (heterophily) indicates
+dominant cross-depth triggering, consistent with throughgoing fault systems or deep-to-
+shallow stress transfer (e.g. deep subduction triggering shallow crustal seismicity in the
+Calabrian arc or Cascadia subduction zone). The E-I index is reported alongside Newman's
+*r*, the k_nn exponent μ, and the rich-club verdict in the same summary table.
+
+*References:*  
+Bianconi G. & Barabási A.-L. (2001). Bose-Einstein condensation in complex networks.
+*Physical Review Letters*, 86, 5632–5635.  
+Colizza V., Flammini A., Serrano M. A. & Vespignani A. (2006). Detecting rich-club
+ordering in complex networks. *Nature Physics*, 2, 110–115.  
+Foster J. G., Foster D. V., Grassberger P. & Paczuski M. (2010). Edge direction and the
+structure of networks. *PNAS*, 107(24), 10815–10820.  
+Krackhardt D. & Stern R. N. (1988). Informal networks and organizational crises: an
+experimental simulation. *Social Psychology Quarterly*, 51(2), 123–140.  
+Newman M. E. J. (2002). Assortative mixing in networks. *Physical Review Letters*, 89,
+208701.  
+Pastor-Satorras R., Vázquez A. & Vespignani A. (2001). Dynamical and correlation
+properties of the Internet. *Physical Review Letters*, 87, 258701.
 
 ---
 
@@ -474,10 +583,10 @@ Interactive Plotly maps require a browser with WebGL2 support (Chrome recommende
 │   ├── viz.py                        # Degree distribution plots
 │   ├── seismology.py                 # Gutenberg–Richter, Omori–Utsu fitting
 │   ├── nullmodels.py                 # ER, BA, WS, SBM, configuration model
-│   ├── centrality.py                 # Eight centrality measures + geographic maps
-│   ├── assortativity.py              # Newman assortativity (degree, depth, magnitude)
+│   ├── centrality.py                 # 13 centrality measures + BB fitness + geographic maps
+│   ├── assortativity.py              # Newman r, k_nn μ, directed mixing, rich-club, E-I index
 │   ├── robustness.py                 # Random and targeted node removal
-│   ├── community.py                  # Louvain, Consensus, Spectral, InfoMap, NMI
+│   ├── community.py                  # Seven detection methods, partition quality scoring, NMI
 │   ├── community_flow.py             # Markov chain over communities
 │   ├── spatial_nulls.py              # Gravity null model, structural excess
 │   ├── temporal.py                   # Temporal multilayer, partition/hub/edge stability
@@ -506,6 +615,9 @@ Interactive Plotly maps require a browser with WebGL2 support (Chrome recommende
 Abe S. & Suzuki N. (2004). Scale-free network of earthquakes. *Europhysics Letters*,
 65(4), 581–586.
 
+Aldecoa R. & Marín I. (2013). Exploring the limits of community detection strategies in
+complex networks. *Scientific Reports*, 3, 2216.
+
 Baiesi M. & Paczuski M. (2004). Scale-free networks of earthquakes and aftershocks.
 *Physical Review E*, 69, 066106.
 
@@ -521,8 +633,14 @@ data. *SIAM Review*, 51(4), 661–703.
 Console R., Murru M. & Lombardi A. M. (2003). Refining earthquake clustering models.
 *Journal of Geophysical Research*, 108(B10), 2468.
 
+Colizza V., Flammini A., Serrano M. A. & Vespignani A. (2006). Detecting rich-club
+ordering in complex networks. *Nature Physics*, 2, 110–115.
+
 Donner R. V., Zou Y., Donges J. F., Marwan N. & Kurths J. (2010). Recurrence networks —
 a novel paradigm for nonlinear time series analysis. *New Journal of Physics*, 12, 033025.
+
+Foster J. G., Foster D. V., Grassberger P. & Paczuski M. (2010). Edge direction and the
+structure of networks. *PNAS*, 107(24), 10815–10820.
 
 Granovetter M. S. (1973). The strength of weak ties. *American Journal of Sociology*,
 78(6), 1360–1380.
@@ -539,8 +657,14 @@ Newman M. E. J. (2002). Assortative mixing in networks. *Physical Review Letters
 Ogata Y. (1988). Statistical models for earthquake occurrences and residual analysis for
 point processes. *Journal of the American Statistical Association*, 83, 9–27.
 
+Pastor-Satorras R., Vázquez A. & Vespignani A. (2001). Dynamical and correlation
+properties of the Internet. *Physical Review Letters*, 87, 258701.
+
 Pessa A. A. B. & Ribeiro H. V. (2019). Characterizing stochastic time series with ordinal
 networks. *Physical Review E*, 100, 042304.
+
+Romijnders R. (2017). bigclam — educational implementation of BigCLAM.
+https://github.com/RobRomijnders/bigclam
 
 Rosvall M. & Bergstrom C. T. (2008). Maps of random walks on complex networks reveal
 community structure. *PNAS*, 105(4), 1118–1123.
@@ -548,8 +672,14 @@ community structure. *PNAS*, 105(4), 1118–1123.
 Telesca L. & Lovallo M. (2012). Analysis of seismic sequences by using the method of
 visibility graph. *Europhysics Letters*, 97, 50002.
 
+Traag V. A., Waltman L. & van Eck N. J. (2019). From Louvain to Leiden: guaranteeing
+well-connected communities. *Scientific Reports*, 9, 5233.
+
 Wilson A. G. (1971). A family of spatial interaction models and their derivation.
 *Environment and Planning A*, 3, 1–32.
+
+Yang J. & Leskovec J. (2013). Overlapping community detection at scale: a nonnegative
+matrix factorization approach. *ACM WSDM*, 587–596.
 
 Zaliapin I. & Ben-Zion Y. (2008). Nonclassical earthquake statistics: from theory to
 practice. *Pure and Applied Geophysics*, 165, 1–21.
