@@ -258,7 +258,7 @@ def plot_centrality_correlation(df: pd.DataFrame, title: str = "", save: bool = 
     title : str
         Figure title suffix.
     """
-    available = [m for m in _METRICS if m in df.columns]
+    available = [m for m in _METRICS if m in df.columns and df[m].nunique() > 1]
     corr = df[available].corr(method="spearman")
 
     sz = max(7, len(available) * 0.8)
@@ -301,7 +301,7 @@ def plot_top_n_cells(
     title : str
         Figure title suffix.
     """
-    available = [m for m in _METRICS if m in df.columns]
+    available = [m for m in _METRICS if m in df.columns and df[m].nunique() > 1]
     n_cols = 4
     n_rows = int(np.ceil(len(available) / n_cols))
 
@@ -840,7 +840,7 @@ def plot_bb_fitness(
             label="Empirical Lorenz curve")
     ax.plot([0, 1], [0, 1], "k--", linewidth=1.2, alpha=0.6, label="Perfect equality (BA)")
     # Gini coefficient as annotation
-    gini = 1 - 2 * np.trapz(cum_k, cum_cells)
+    gini = 1 - 2 * np.trapezoid(cum_k, cum_cells)
     ax.text(0.05, 0.92, f"Gini = {gini:.3f}", transform=ax.transAxes,
             fontsize=10, bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8))
     ax.set_xlabel("Cumulative fraction of cells\n(sorted by β̂ desc.)", fontsize=11)
