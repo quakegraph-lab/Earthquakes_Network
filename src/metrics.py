@@ -138,113 +138,116 @@ def measure_preferential_attachment(
     cell_size_km: float = 10.0,
     target_crs: str = "epsg:5070",
     k_min: int = 1,
+    n_bins: int = 20,
+    split: float = 0.5,
 ) -> tuple[np.ndarray, np.ndarray, float]:
     """
     Measure the empirical preferential attachment kernel π(k).
 
-    In the Barabási-Albert model new edges attach to nodes with probability
-    proportional to their current degree:
+    Uses the **two-snapshot estimator** (Barabási *et al.* 2002):
 
-    .. math::
+    1. Split the sorted event sequence at fraction ``split`` (default 50 %).
+    2. Build the network on the first half → degree :math:`k_i` for each cell.
+    3. Count how many times each cell is the **target** (next earthquake) in
+       the second half → :math:`\\Delta k_i`.
+    4. Bin nodes by :math:`k_i` on a log scale and compute
+       :math:`\\pi(k) = \\langle \\Delta k_i \\rangle_{k_i \\approx k}`.
 
-        \\pi(k) \\propto k^{\\alpha},\\quad \\alpha = 1\\text{ (linear PA)}.
+    This avoids the consecutive-step saturation artefact of step-by-step
+    estimators: the first-half degree is a stable snapshot, and the second-half
+    target counts are a clean observation of which degree classes attract new
+    edges.
 
-    The empirical estimator (Jeong *et al.* 2003) replays the chronological
-    edge sequence.  At each step :math:`t`, both the source cell
-    :math:`u = c_t` and target cell :math:`v = c_{t+1}` receive a degree
-    increment.  The kernel is estimated as
-
-    .. math::
-
-        \\pi(k) = \\frac{\\sum_{i:\\,k_i(t)=k} \\Delta k_i}{\\#\\{i:\\,k_i(t)=k\\}},
-
-    where the sum runs over all (node, time) pairs at which node :math:`i`
-    had degree :math:`k` just before gaining a new edge.
-
-    A log-log power-law fit gives the attachment exponent :math:`\\alpha`:
     :math:`\\alpha \\approx 1` confirms linear preferential attachment (BA);
-    :math:`\\alpha < 1` sub-linear; :math:`\\alpha > 1` super-linear (winner-take-all).
-
-    Seismological interpretation: :math:`\\alpha \\approx 1` would mean that
-    seismically active zones (high-degree cells) attract proportionally more
-    future events — consistent with stress-shadow release focusing on already
-    active fault segments.
+    :math:`\\alpha < 1` sub-linear; :math:`\\alpha > 1` super-linear.
 
     Parameters
     ----------
     df : pd.DataFrame
-        Earthquake catalog with columns ``time``, ``latitude``,
-        ``longitude``, ``depth_km``. Need not be pre-sorted.
+        Earthquake catalog (columns: ``time``, ``latitude``, ``longitude``,
+        ``depth_km``).
     cell_size_km : float
-        Grid resolution; must match the network being analysed.
+        Grid resolution matching the network.
     target_crs : str
-        Projection CRS (``"epsg:5070"`` US, ``"epsg:32632"`` Italy,
-        ``"epsg:32654"`` Japan).
+        Projection CRS.
     k_min : int
-        Minimum degree to include in the fit (avoids noise at k=0).
+        Minimum first-half degree to include.
+    n_bins : int
+        Number of logarithmic degree bins.
+    split : float
+        Fraction of events in the first (reference) half (default 0.5).
 
     Returns
     -------
     ks : np.ndarray
-        Degree values for which π(k) was estimated.
+        Log-bin centres (degree).
     pi_k : np.ndarray
-        Empirical π(k) values.
+        Mean Δk per bin (proportional to π(k)).
     alpha : float
-        Power-law exponent from log-log fit (nan if fit fails).
+        Power-law exponent from OLS log-log fit.
 
     References
     ----------
+    Barabási A.-L. *et al.* (2002). Evolution of the social network of
+    scientific collaborations. *Physica A*, 311, 590–614.
+
     Jeong H., Néda Z. & Barabási A.-L. (2003). Measuring preferential
     attachment in evolving networks. *Europhysics Letters* 61, 567–572.
-
-    Barabási A.-L. & Albert R. (1999). Emergence of scaling in random
-    networks. *Science* 286, 509–512.
     """
-    from collections import defaultdict
-    from src.network import discretize_space_3d  # noqa: PLC0415
+    from collections import Counter
+    from src.network import discretize_space_3d, build_abe_suzuki_network  # noqa: PLC0415
 
     df_s = df.sort_values("time").reset_index(drop=True)
-    df_grid = discretize_space_3d(df_s, cell_size_km=cell_size_km,
-                                  target_crs=target_crs)
-    seq = df_grid["cell_id"].tolist()
+    cut = int(len(df_s) * split)
+    df_first  = df_s.iloc[:cut].reset_index(drop=True)
+    df_second = df_s.iloc[cut:].reset_index(drop=True)
 
-    deg: dict[str, int] = defaultdict(int)
-    delta_k: dict[int, float] = defaultdict(float)
-    count_k: dict[int, int]   = defaultdict(int)
+    # First-half network → degree k_i for each cell
+    G_first = build_abe_suzuki_network(
+        df_first, cell_size_km=cell_size_km, target_crs=target_crs,
+    )
+    k_first: dict[str, int] = dict(G_first.degree())
 
-    for t in range(len(seq) - 1):
-        u, v = seq[t], seq[t + 1]
-        if u == v:
-            # Self-loop: source cell gains degree but stays at same node
-            ku = deg[u]
-            delta_k[ku] += 1
-            count_k[ku] += 1
-            deg[u] += 2  # both in and out
-            continue
-        ku, kv = deg[u], deg[v]
-        delta_k[ku] += 1
-        count_k[ku] += 1
-        delta_k[kv] += 1
-        count_k[kv] += 1
-        deg[u] += 1
-        deg[v] += 1
+    # Second-half target counts Δk_i (times each cell is the next earthquake)
+    df_grid2 = discretize_space_3d(df_second, cell_size_km=cell_size_km,
+                                   target_crs=target_crs)
+    seq2 = df_grid2["cell_id"].tolist()
+    target_counts: Counter[str] = Counter(seq2[1:])  # every position except first is a target
 
-    ks_all = sorted(delta_k.keys())
-    pi_all = np.array([delta_k[k] / count_k[k] for k in ks_all], dtype=float)
-    ks_all = np.array(ks_all, dtype=float)
+    # Pair (k_first[cell], Δk[cell]) for cells in the first-half network
+    pairs = [
+        (k_first[n], target_counts.get(n, 0))
+        for n in G_first.nodes()
+        if k_first.get(n, 0) >= k_min
+    ]
+    if not pairs:
+        return np.array([]), np.array([]), float("nan")
 
-    mask = ks_all >= k_min
-    ks   = ks_all[mask]
-    pi_k = pi_all[mask]
+    ks_node = np.array([p[0] for p in pairs], dtype=float)
+    dk_node = np.array([p[1] for p in pairs], dtype=float)
 
-    if mask.sum() >= 3:
+    # Log-bin: mean Δk per degree bin
+    bin_edges = np.logspace(np.log10(ks_node.min()), np.log10(ks_node.max()), n_bins + 1)
+    k_binned, pi_binned = [], []
+    for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
+        mask_bin = (ks_node >= lo) & (ks_node < hi)
+        if mask_bin.sum() >= 2:
+            k_binned.append(np.sqrt(lo * hi))
+            pi_binned.append(dk_node[mask_bin].mean())
+    ks   = np.array(k_binned)
+    pi_k = np.array(pi_binned)
+
+    valid = pi_k > 0
+    ks, pi_k = ks[valid], pi_k[valid]
+
+    if len(ks) >= 3:
         log_c: float
         alpha, log_c = np.polyfit(np.log10(ks), np.log10(pi_k), 1)
     else:
         alpha = float("nan")
 
     log.info(
-        "Preferential attachment: α = %.3f (%d degree bins, k_min=%d)",
+        "Preferential attachment (two-snapshot): α = %.3f (%d bins, k_min=%d)",
         alpha, len(ks), k_min,
     )
     return ks, pi_k, float(alpha)
@@ -283,8 +286,9 @@ def plot_preferential_attachment(
     ks_fit, pi_fit_data = ks[mask], pi_k[mask]
 
     fig, ax = plt.subplots(figsize=(7, 5))
-    ax.scatter(ks_fit, pi_fit_data, s=18, alpha=0.7, color="steelblue",
-               zorder=3, label=r"Empirical $\pi(k)$")
+    ax.scatter(ks_fit, pi_fit_data, s=45, alpha=0.85, color="steelblue",
+               edgecolors="k", linewidths=0.4, zorder=3,
+               label=r"Empirical $\pi(k)$ (log-binned)")
 
     if not np.isnan(alpha) and len(ks_fit) >= 3:
         log_c = float(np.mean(np.log10(pi_fit_data) - alpha * np.log10(ks_fit)))

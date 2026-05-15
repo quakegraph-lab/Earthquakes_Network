@@ -45,7 +45,8 @@ def discretize_space_3d(
     -------
     pd.DataFrame
         New DataFrame (original unchanged) with added columns ``cell_x``,
-        ``cell_y``, ``cell_z``, and ``cell_id`` (string key ``"cx_cy_cz"``).
+        ``cell_y``, ``cell_z``, ``cell_id`` (string key ``"cx_cy_cz"``),
+        and ``x_km`` / ``y_km`` (projected metric coordinates, unshifted).
 
     Notes
     -----
@@ -71,6 +72,8 @@ def discretize_space_3d(
     cz = pd.Series(np.floor(z_km      / cell_size_km).astype(int), index=df.index)
 
     return df.assign(
+        x_km=pd.Series(x_km, index=df.index),
+        y_km=pd.Series(y_km, index=df.index),
         cell_x=cx,
         cell_y=cy,
         cell_z=cz,
@@ -90,8 +93,8 @@ def build_abe_suzuki_network(
     Nodes are 3-D spatial cells; a directed edge u → v means that at least
     one earthquake in cell u was immediately followed by one in cell v.
     Edge attribute ``weight`` counts the number of such transitions.
-    Node attributes ``lat`` and ``lon`` store the mean geographic centre of
-    each cell.
+    Node attributes ``lat`` and ``lon`` store the true geometric centre of
+    each cell (inverse-projected from the cell's midpoint in metric space).
 
     Parameters
     ----------
@@ -126,11 +129,27 @@ def build_abe_suzuki_network(
     edge_counts: Counter = Counter(zip(seq[:-1], seq[1:]))
     G.add_weighted_edges_from((u, v, w) for (u, v), w in edge_counts.items())
 
-    centers = df_grid.groupby("cell_id")[["longitude", "latitude"]].mean()
+    # True geometric centre of each cell: (cx + 0.5) * cell_size + origin,
+    # inverse-projected back to WGS-84. This is exact regardless of how
+    # many earthquakes fell in the cell (unlike the previous mean of events).
+    inv = Transformer.from_crs(target_crs, "epsg:4326", always_xy=True)
+    x_origin = df_grid["x_km"].min()
+    y_origin = df_grid["y_km"].min()
+    cell_info = (
+        df_grid[["cell_id", "cell_x", "cell_y"]]
+        .drop_duplicates("cell_id")
+        .set_index("cell_id")
+    )
     for node in G.nodes():
-        if node in centers.index:
-            G.nodes[node]["lat"] = centers.at[node, "latitude"]
-            G.nodes[node]["lon"] = centers.at[node, "longitude"]
+        if node not in cell_info.index:
+            continue
+        cx = cell_info.at[node, "cell_x"]
+        cy = cell_info.at[node, "cell_y"]
+        x_m = ((cx + 0.5) * cell_size_km + x_origin) * 1000.0
+        y_m = ((cy + 0.5) * cell_size_km + y_origin) * 1000.0
+        lon, lat = inv.transform(x_m, y_m)
+        G.nodes[node]["lat"] = float(lat)
+        G.nodes[node]["lon"] = float(lon)
 
     log.info(
         "Network (%d km, %s): %d nodes, %d edges, %d self-loops — %.1fs",

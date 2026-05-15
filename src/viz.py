@@ -179,15 +179,16 @@ def analyze_degree_distribution_log_binning(
     title: str,
     k_min_fit: float = 10,
     n_bins: int = 25,
+    gamma_mle: float | None = None,
     save: bool = True,
 ) -> None:
     """
-    Degree distribution with logarithmic binning and an OLS power-law fit
-    on the tail.
+    Degree distribution with logarithmic binning and optional MLE power-law fit.
 
     Log-binning normalises by bin width, giving probability *density* P(k).
-    This is the standard approach for heavy-tailed distributions where
-    linear binning leaves the tail noisy.
+    When ``gamma_mle`` is supplied the amplitude is fitted by least-squares
+    on the log-binned tail ($k \geq$ ``k_min_fit``) while the slope is fixed
+    to the MLE exponent — giving a visually honest fit without OLS bias.
 
     Parameters
     ----------
@@ -196,9 +197,11 @@ def analyze_degree_distribution_log_binning(
     title : str
         Figure title suffix.
     k_min_fit : float
-        Minimum degree for the tail fit.
+        Minimum degree used for the fit amplitude and the fit overlay.
     n_bins : int
         Number of logarithmically spaced bins.
+    gamma_mle : float or None
+        MLE power-law exponent.  If given, a fit line is drawn on the tail.
     """
     degrees = [d for _, d in G.degree(weight="weight") if d > 0]
     if not degrees:
@@ -211,24 +214,25 @@ def analyze_degree_distribution_log_binning(
     widths  = np.diff(edges)
     P_k     = counts / (len(degrees) * widths)
 
-    valid   = P_k > 0
+    valid    = P_k > 0
     k_v, P_v = centers[valid], P_k[valid]
-
-    gamma, r_val = 0.0, 0.0
-    fit_line = np.array([])
-    fit_mask = k_v >= k_min_fit
-    if fit_mask.sum() > 2:
-        slope, intercept, r_val, *_ = linregress(
-            np.log10(k_v[fit_mask]), np.log10(P_v[fit_mask]))
-        gamma    = -slope
-        fit_line = 10**intercept * k_v[fit_mask]**(-gamma)
 
     fig, ax = plt.subplots(figsize=(9, 6))
     ax.scatter(k_v, P_v, color="darkviolet", alpha=0.8, edgecolors="k", s=60,
                label="Log-binned")
-    if fit_line.size:
-        ax.plot(k_v[fit_mask], fit_line, "r--", linewidth=2.5,
-                label=rf"Fit ($k \geq {k_min_fit}$): $\gamma \approx {gamma:.2f}$")
+
+    if gamma_mle is not None:
+        fit_mask = k_v >= k_min_fit
+        if fit_mask.sum() > 1:
+            log_k = np.log10(k_v[fit_mask])
+            log_P = np.log10(P_v[fit_mask])
+            intercept = np.mean(log_P + gamma_mle * log_k)
+            fit_k  = np.logspace(np.log10(k_v[fit_mask][0]),
+                                  np.log10(k_v[-1]), 200)
+            fit_P  = 10**intercept * fit_k**(-gamma_mle)
+            ax.plot(fit_k, fit_P, color="crimson", linewidth=2.5, linestyle="--",
+                    label=rf"MLE fit ($k \geq {k_min_fit:.0f}$): $\hat{{\gamma}} = {gamma_mle:.2f}$")
+
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_title(f"Degree Distribution (Log-Binning): {title}", fontsize=15)
@@ -241,20 +245,22 @@ def analyze_degree_distribution_log_binning(
         savefig(f"degree_distribution_log_binning_{_slug(title)}")
     plt.show()
 
-    print(f"[{title}] γ={gamma:.3f}  R²={r_val**2:.3f}")
+    print(f"[{title}] log-binned distribution plotted.")
 
 
 def plot_ccdf_with_fit(
     G: nx.Graph,
     title: str,
     k_min_fit: float = 10,
+    gamma_mle: float | None = None,
     save: bool = True,
 ) -> None:
     """
-    CCDF of node degree with an OLS power-law fit on the tail.
+    CCDF of node degree with optional MLE power-law fit.
 
-    For a power law P(k) ∝ k^{-γ}, the CCDF scales as k^{-(γ-1)},
-    so γ = 1 − slope.
+    For $P(k) \propto k^{-\gamma}$ the CCDF scales as $k^{-(\gamma-1)}$.
+    When ``gamma_mle`` is supplied the amplitude is fitted on the tail while
+    the slope is fixed — giving a clean MLE-anchored overlay.
 
     Parameters
     ----------
@@ -263,7 +269,9 @@ def plot_ccdf_with_fit(
     title : str
         Figure title suffix.
     k_min_fit : float
-        Minimum degree for the tail fit.
+        Minimum degree for the fit overlay.
+    gamma_mle : float or None
+        MLE power-law exponent.  If given, a fit line is drawn on the tail.
     """
     degrees = np.array([d for _, d in G.degree(weight="weight") if d > 0])
     if len(degrees) == 0:
@@ -273,19 +281,22 @@ def plot_ccdf_with_fit(
     k_vals = np.sort(np.unique(degrees))
     ccdf   = np.array([np.mean(degrees >= k) for k in k_vals])
 
-    gamma, r, fit_line = float("nan"), 0.0, None
-    mask = k_vals >= k_min_fit
-    if mask.sum() > 2:
-        slope, intercept, r, *_ = linregress(
-            np.log10(k_vals[mask]), np.log10(ccdf[mask]))
-        gamma    = 1 - slope
-        fit_line = 10**intercept * k_vals[mask]**slope
-
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.scatter(k_vals, ccdf, s=40, alpha=0.8, label="CCDF")
-    if fit_line is not None:
-        ax.plot(k_vals[mask], fit_line, "r--",
-                label=rf"Fit: $\gamma \approx {gamma:.2f}$")
+
+    if gamma_mle is not None:
+        mask = k_vals >= k_min_fit
+        if mask.sum() > 1:
+            ccdf_exp = gamma_mle - 1
+            log_k    = np.log10(k_vals[mask])
+            log_c    = np.log10(ccdf[mask])
+            intercept = np.mean(log_c + ccdf_exp * log_k)
+            fit_k = np.logspace(np.log10(k_vals[mask][0]),
+                                 np.log10(k_vals[-1]), 200)
+            fit_c = 10**intercept * fit_k**(-ccdf_exp)
+            ax.plot(fit_k, fit_c, color="crimson", linewidth=2.5, linestyle="--",
+                    label=rf"MLE fit: $\hat{{\gamma}} = {gamma_mle:.2f}$")
+
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("Degree $k$", fontsize=12)
@@ -298,4 +309,4 @@ def plot_ccdf_with_fit(
         savefig(f"ccdf_{_slug(title)}")
     plt.show()
 
-    print(f"[{title}] γ≈{gamma:.3f}  R²≈{r**2:.3f}")
+    print(f"[{title}] CCDF plotted.")

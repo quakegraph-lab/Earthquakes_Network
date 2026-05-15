@@ -6,7 +6,7 @@ passed to any downstream function interchangeably:
 
   Louvain              — modularity optimisation via leidenalg/igraph (Leiden
                          algorithm); strictly better than the NetworkX implementation
-  Consensus Louvain    — 100-run co-occurrence → agglomerative clustering;
+  Consensus Louvain    — 100-run co-occurrence → consensus matrix → Louvain;
                          removes partition instability inherent to single-run Louvain
   Spectral             — k-way spectral clustering on the normalised Laplacian
                          (Jordan-Weiss); k taken from Louvain community count
@@ -43,7 +43,7 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import seaborn as sns
-from sklearn.cluster import AgglomerativeClustering, KMeans
+from sklearn.cluster import KMeans
 from sklearn.metrics import normalized_mutual_info_score
 from sklearn.preprocessing import normalize
 
@@ -87,28 +87,24 @@ Partition = dict[str, int]
 
 # ── Method 1: single-run Louvain ─────────────────────────────────────────────
 
-def run_louvain(G: nx.Graph, seed: int = 42) -> Partition:
+def run_louvain(G: nx.Graph, seed: int = 42, resolution: float = 1.0) -> Partition:
     """
     Louvain community detection via the Leiden algorithm (leidenalg / igraph).
 
-    Maximises the Newman–Girvan modularity
+    Maximises the Reichardt–Bornholdt modularity with resolution parameter
+    :math:`\\gamma`:
 
     .. math::
 
-        Q = \\frac{1}{2m}\\sum_{ij}\\left[A_{ij}
-            - \\frac{k_i k_j}{2m}\\right]\\delta(c_i, c_j),
+        Q_{\\gamma} = \\frac{1}{2m}\\sum_{ij}\\left[A_{ij}
+            - \\gamma\\frac{k_i k_j}{2m}\\right]\\delta(c_i, c_j).
 
-    where :math:`m` is the total edge weight, :math:`k_i` the weighted degree
-    of node :math:`i`, and :math:`\\delta` the Kronecker delta.
+    At :math:`\\gamma = 1` this is identical to Newman–Girvan modularity.
+    Smaller :math:`\\gamma` (e.g. 0.5) merges more nodes into fewer, larger
+    communities; larger :math:`\\gamma > 1` splits into finer communities.
 
-    The optimisation is performed by the Leiden algorithm
-    (Traag, Waltman & van Eck 2019), which is a strict improvement over the
-    original Louvain heuristic: it guarantees that every community in the
-    output partition is internally well-connected (Louvain can produce
-    arbitrarily badly connected communities).  The quality function
-    ``ModularityVertexPartition`` ensures full comparability with all
-    modularity-based results in the literature.  Edge weights are passed to
-    the optimiser; unweighted graphs default to unit weights.
+    The optimisation uses the Leiden algorithm (Traag *et al.* 2019), which
+    guarantees internally well-connected communities.
 
     Parameters
     ----------
@@ -116,6 +112,9 @@ def run_louvain(G: nx.Graph, seed: int = 42) -> Partition:
         Undirected graph (self-loops removed).
     seed : int
         Random seed for the Leiden optimiser.
+    resolution : float
+        Resolution parameter γ (default 1.0 = standard modularity).
+        Lower values → fewer, larger communities.
 
     Returns
     -------
@@ -127,16 +126,18 @@ def run_louvain(G: nx.Graph, seed: int = 42) -> Partition:
     Traag V. A., Waltman L. & van Eck N. J. (2019). From Louvain to Leiden:
     guaranteeing well-connected communities. *Scientific Reports*, 9, 5233.
 
-    Blondel V. D. et al. (2008). Fast unfolding of communities in large
-    networks. *Journal of Statistical Mechanics*, P10008.
+    Reichardt J. & Bornholdt S. (2006). Statistical mechanics of community
+    detection. *Physical Review E*, 74, 016110.
     """
     import leidenalg
 
     g, nodes = _to_igraph(G)
     part = leidenalg.find_partition(
-        g, leidenalg.ModularityVertexPartition, weights="weight", seed=seed,
+        g, leidenalg.RBConfigurationVertexPartition,
+        weights="weight", seed=seed, resolution_parameter=resolution,
     )
-    log.info("Louvain (Leiden): %d communities, Q=%.4f", len(part), part.modularity)
+    log.info("Louvain (Leiden, γ=%.2f): %d communities, Q=%.4f",
+             resolution, len(part), part.modularity)
     return {nodes[i]: cid for cid, members in enumerate(part) for i in members}
 
 
@@ -147,19 +148,23 @@ def run_consensus_louvain(
     n_runs: int = 100,
     seed: int = 42,
     max_nodes: int = 50_000,
+    resolution: float = 1.0,
 ) -> Partition:
     """
-    Consensus Louvain: run Louvain n_runs times, build a co-occurrence matrix,
-    then use agglomerative clustering to find a stable partition.
+    Consensus Louvain (Lancichinetti & Fortunato 2012): run Louvain ``n_runs``
+    times, build the consensus matrix, then run Louvain once on that matrix.
 
-    The co-occurrence matrix C[i,j] is the fraction of runs where nodes i and j
-    land in the same community. Agglomerative clustering on (1-C) with
-    ``n_clusters`` equal to the median number of Louvain communities removes
-    the stochasticity that makes single-run Louvain unreliable.
+    Step 1 — co-occurrence: C[i,j] = fraction of runs where i and j land in
+    the same community (C ∈ [0, 1], diagonal excluded).
+    Step 2 — consensus graph: treat C as a weighted undirected graph; edges
+    with weight 0 are dropped (pairs never co-assigned are not connected).
+    Step 3 — final partition: run Louvain once on the consensus graph.  The
+    edge weights now encode community co-assignment probability, so the Louvain
+    objective naturally groups nodes that consistently cluster together.
 
     For graphs with more than ``max_nodes`` nodes the N×N co-occurrence matrix
-    would be prohibitively large (e.g. 173 GiB for N=215k). In that case the
-    function falls back to a single Louvain run.
+    would be prohibitively large. In that case the function falls back to a
+    single Louvain run.
 
     Parameters
     ----------
@@ -177,7 +182,13 @@ def run_consensus_louvain(
     -------
     Partition
         ``{node_id: community_int}`` mapping.
+
+    References
+    ----------
+    Lancichinetti A. & Fortunato S. (2012). Consensus clustering in complex
+    networks. *Scientific Reports*, 2, 336.
     """
+    import igraph as ig
     import leidenalg
 
     nodes = list(G.nodes())
@@ -193,37 +204,43 @@ def run_consensus_louvain(
             n, max_nodes, mem_gib,
         )
         part = leidenalg.find_partition(
-            g, leidenalg.ModularityVertexPartition, weights="weight", seed=seed,
+            g, leidenalg.RBConfigurationVertexPartition,
+            weights="weight", seed=seed, resolution_parameter=resolution,
         )
         return {nodes[i]: cid for cid, members in enumerate(part) for i in members}
 
-    idx = {node: i for i, node in enumerate(nodes)}
+    # Step 1: build co-occurrence matrix
     co = np.zeros((n, n), dtype=np.float32)
-    k_counts = []
-
-    log.info("Consensus Louvain: %d runs (leidenalg)...", n_runs)
+    log.info("Consensus Louvain: %d runs (γ=%.2f)...", n_runs, resolution)
     for r in range(n_runs):
         part = leidenalg.find_partition(
-            g, leidenalg.ModularityVertexPartition, weights="weight", seed=seed + r,
+            g, leidenalg.RBConfigurationVertexPartition,
+            weights="weight", seed=seed + r, resolution_parameter=resolution,
         )
-        k_counts.append(len(part))
         for members in part:
             ids = list(members)
             for i in ids:
                 co[i, ids] += 1.0
+    co /= n_runs
+    np.fill_diagonal(co, 0.0)
 
-    co /= n_runs                              # fraction of runs in same community
-    k_consensus = int(np.median(k_counts))
-    log.info("  median k=%d across runs", k_consensus)
+    # Step 2: build consensus graph (upper triangle only, drop zero edges)
+    rows, cols = np.where(co > 0)
+    mask = rows < cols
+    edges   = list(zip(rows[mask].tolist(), cols[mask].tolist()))
+    weights = co[rows[mask], cols[mask]].tolist()
+    g_cons = ig.Graph(n=n, edges=edges, directed=False)
+    g_cons.es["weight"] = weights
+    log.info("  consensus graph: %d edges", len(edges))
 
-    dist = 1.0 - co
-    agg = AgglomerativeClustering(
-        n_clusters=k_consensus,
-        metric="precomputed",
-        linkage="average",
+    # Step 3: run Louvain on the consensus graph (resolution=1 here — the
+    # consensus weights already encode the desired coarseness)
+    part_final = leidenalg.find_partition(
+        g_cons, leidenalg.ModularityVertexPartition, weights="weight", seed=seed,
     )
-    labels = agg.fit_predict(dist)
-    return {nodes[i]: int(labels[i]) for i in range(n)}
+    log.info("  consensus partition: %d communities, Q=%.4f",
+             len(part_final), part_final.modularity)
+    return {nodes[i]: cid for cid, members in enumerate(part_final) for i in members}
 
 
 # ── Method 3: spectral clustering ────────────────────────────────────────────
@@ -1112,7 +1129,7 @@ def plot_partition_scores(
     ax.set_ylabel("Method")
     plt.tight_layout()
     if save:
-        savefig(fig, "community_partition_scores", title)
+        savefig(f"community_partition_scores_{_slug(title)}")
     plt.show()
 
 
@@ -1237,14 +1254,17 @@ def plot_community_geo(
     df = df[df["community"].isin(large)].copy()
     n_shown = df["community"].nunique()
 
+    # Use log1p(degree) so low-degree background nodes are still visible
+    df = df.assign(size_val=np.log1p(df["degree"]).clip(lower=0.5))
+
     fig = px.scatter_map(
         df,
         lat="lat", lon="lon",
         color="community",
-        size="degree", size_max=18,
+        size="size_val", size_max=18,
         color_discrete_sequence=_PALETTE,
         hover_name="community",
-        hover_data={"lat": ":.3f", "lon": ":.3f", "degree": True},
+        hover_data={"lat": ":.3f", "lon": ":.3f", "degree": True, "size_val": False},
         map_style="carto-positron",
         title=(
             f"Seismic Communities — {method_name} "

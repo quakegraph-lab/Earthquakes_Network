@@ -1,29 +1,35 @@
 """
 Centrality computation and comparison for the Abe-Suzuki earthquake network.
 
-Computes 13 measures in a single function, returns a unified DataFrame,
-and provides two diagnostic visualisations:
+``compute_all_centralities`` accepts a ``measures`` parameter (default: the
+five most informative measures) and returns a unified DataFrame.  Up to 13
+measures are available; the full set is listed in ``_METRICS``.
+
+Two diagnostic visualisations:
   1. Spearman rank-correlation heatmap across measures.
   2. Multi-panel top-N cell bar chart per measure.
 
-Measures and seismological interpretations
-------------------------------------------
-In_Degree    — susceptibility: how often a cell is triggered by others.
-Out_Degree   — productivity: how many distinct cells a cell triggers.
+Default measures and seismological interpretations
+--------------------------------------------------
 Degree       — total activity (in + out), most seismically active cells.
 PageRank     — "stress sinks": cells that persistently receive seismic flow.
-Harmonic     — topological reach via sum of inverse distances; handles
-               disconnected nodes gracefully (closeness is 0 for unreachable nodes).
 Closeness    — cells that can spread seismic influence fastest across the network.
 Betweenness  — "bridges": cells on shortest paths between fault clusters.
+Clustering   — local clustering coefficient: fraction of a cell's neighbours
+               that are also mutually connected; high at fault junctions.
+
+Additional available measures (pass via ``measures=``)
+------------------------------------------------------
+In_Degree    — susceptibility: how often a cell is triggered by others.
+Out_Degree   — productivity: how many distinct cells a cell triggers.
+Harmonic     — topological reach via sum of inverse distances; handles
+               disconnected nodes gracefully (closeness is 0 for unreachable nodes).
 Eigenvector  — cells embedded in the high-activity core (rich-club).
 Katz         — like eigenvector but counts ALL paths (with exponential decay),
                more robust for directed/sparse graphs.
 HITS Hub     — cells that trigger important seismic zones (high out-connections
                to high-authority cells).
 HITS Auth    — cells that are the primary destinations of seismic propagation.
-Clustering   — local clustering coefficient: fraction of a cell's neighbours
-               that are also mutually connected; high at fault junctions.
 Triangles    — raw triangle count per node (undirected); zero in a perfect tree,
                high at fault intersections and dense aftershock clusters.
 
@@ -73,135 +79,154 @@ _LABELS = {
 }
 
 
+_DEFAULT_MEASURES = frozenset({
+    "Degree", "PageRank", "Closeness", "Betweenness", "Clustering",
+})
+
+
 def compute_all_centralities(
     G: nx.DiGraph,
     k_betweenness: int = 1000,
     cell_size_km: float = 10.0,
     seed: int = 42,
+    measures: frozenset | set | list | None = None,
 ) -> pd.DataFrame:
     """
-    Compute all 8 centrality measures for the earthquake network.
+    Compute centrality measures for the earthquake network.
 
     Parameters
     ----------
     G : nx.DiGraph
         Directed weighted earthquake network (may have self-loops).
     k_betweenness : int
-        Pivot nodes for betweenness approximation (exact if k ≥ N).
+        Number of random pivot nodes for betweenness approximation.
+        Betweenness is O(VE) exact; sampling k pivots instead of all N
+        gives a fast approximation (exact when k ≥ N).
     cell_size_km : float
-        Cell edge length used to recover physical depth:
-        ``depth_km = cell_z * cell_size_km``.
+        Cell edge length used to recover physical depth.
     seed : int
         Random seed for betweenness sampling.
+    measures : set or None
+        Which measures to compute. Any subset of
+        ``{"In_Degree", "Out_Degree", "Degree", "PageRank", "Harmonic",
+        "Closeness", "Betweenness", "Eigenvector", "Katz", "HITS_Hub",
+        "HITS_Auth", "Clustering", "Triangles"}``.
+        Defaults to ``{"Degree", "PageRank", "Closeness", "Betweenness",
+        "Clustering"}``.
 
     Returns
     -------
     pd.DataFrame
-        One row per node that has geographic coordinates. Columns:
-        ``cell_id``, ``lat``, ``lon``, ``depth_km``,
-        ``Degree``, ``PageRank``, ``Closeness``, ``Betweenness``,
-        ``Eigenvector``, ``Katz``, ``HITS_Hub``, ``HITS_Auth``.
-
-    Notes
-    -----
-    * Eigenvector is computed on the *undirected* version of G for
-      numerical stability (power iteration converges more reliably).
-    * Katz uses ``alpha = 0.85 / max_degree``, which is always below
-      ``1 / lambda_max``, guaranteeing convergence.
-    * HITS operates on G with self-loops removed; hub and authority
-      scores are returned as separate columns.
+        One row per node with geographic coordinates. Always contains
+        ``cell_id``, ``lat``, ``lon``, ``depth_km`` plus one column per
+        requested measure.
     """
+    _req = frozenset(measures) if measures is not None else _DEFAULT_MEASURES
     t_total = time.time()
     n = G.number_of_nodes()
 
-    # ── Undirected version (eigenvector only) ────────────────────────────────
-    G_und = G.to_undirected()
-    G_und.remove_edges_from(nx.selfloop_edges(G_und))
+    _needs_und = bool(_req & {"Eigenvector", "Clustering", "Triangles"})
+    _needs_nsl = bool(_req & {"HITS_Hub", "HITS_Auth"})
 
-    # ── G without self-loops (HITS) ──────────────────────────────────────────
-    G_nsl = G.copy()
-    G_nsl.remove_edges_from(nx.selfloop_edges(G_nsl))
+    if _needs_und:
+        G_und = G.to_undirected()
+        G_und.remove_edges_from(nx.selfloop_edges(G_und))
 
-    # ── 1. In-degree / Out-degree / Total degree ─────────────────────────────
-    log.info("Degree centralities (in, out, total)...")
-    t0 = time.time()
-    in_deg_cent  = nx.in_degree_centrality(G)
-    out_deg_cent = nx.out_degree_centrality(G)
-    deg_cent     = nx.degree_centrality(G)
-    log.info("  %.1fs", time.time() - t0)
+    if _needs_nsl:
+        G_nsl = G.copy()
+        G_nsl.remove_edges_from(nx.selfloop_edges(G_nsl))
+
+    # ── 1. Degree centralities ───────────────────────────────────────────────
+    if _req & {"In_Degree", "Out_Degree", "Degree"}:
+        log.info("Degree centralities...")
+        t0 = time.time()
+        in_deg_cent  = nx.in_degree_centrality(G)  if "In_Degree"  in _req else {}
+        out_deg_cent = nx.out_degree_centrality(G) if "Out_Degree" in _req else {}
+        deg_cent     = nx.degree_centrality(G)     if "Degree"     in _req else {}
+        log.info("  %.1fs", time.time() - t0)
 
     # ── 2. PageRank ──────────────────────────────────────────────────────────
-    log.info("PageRank...")
-    t0 = time.time()
-    pr_cent = nx.pagerank(G, weight="weight")
-    log.info("  %.1fs", time.time() - t0)
+    if "PageRank" in _req:
+        log.info("PageRank...")
+        t0 = time.time()
+        pr_cent = nx.pagerank(G, weight="weight")
+        log.info("  %.1fs", time.time() - t0)
 
     # ── 3. Harmonic ──────────────────────────────────────────────────────────
-    log.info("Harmonic centrality...")
-    t0 = time.time()
-    harm_cent = nx.harmonic_centrality(G)
-    log.info("  %.1fs", time.time() - t0)
+    if "Harmonic" in _req:
+        log.info("Harmonic centrality...")
+        t0 = time.time()
+        harm_cent = nx.harmonic_centrality(G)
+        log.info("  %.1fs", time.time() - t0)
 
     # ── 4. Closeness ─────────────────────────────────────────────────────────
-    log.info("Closeness centrality...")
-    t0 = time.time()
-    close_cent = nx.closeness_centrality(G)
-    log.info("  %.1fs", time.time() - t0)
+    if "Closeness" in _req:
+        log.info("Closeness centrality...")
+        t0 = time.time()
+        close_cent = nx.closeness_centrality(G)
+        log.info("  %.1fs", time.time() - t0)
 
-    # ── 4. Betweenness (sampled) ─────────────────────────────────────────────
-    log.info("Betweenness centrality (k=%d)...", k_betweenness)
-    t0 = time.time()
-    bet_cent = nx.betweenness_centrality(G, k=min(k_betweenness, n), seed=seed)
-    log.info("  %.1fs", time.time() - t0)
+    # ── 5. Betweenness (sampled, k = pivot nodes) ────────────────────────────
+    if "Betweenness" in _req:
+        log.info("Betweenness centrality (k=%d pivot nodes, exact when k≥N)...",
+                 k_betweenness)
+        t0 = time.time()
+        bet_cent = nx.betweenness_centrality(G, k=min(k_betweenness, n), seed=seed)
+        log.info("  %.1fs", time.time() - t0)
 
-    # ── 5. Eigenvector (undirected, numpy fallback) ──────────────────────────
-    log.info("Eigenvector centrality (undirected)...")
-    t0 = time.time()
-    try:
-        eig_cent = nx.eigenvector_centrality(
-            G_und, weight="weight", max_iter=500, tol=1e-6)
-    except nx.PowerIterationFailedConvergence:
-        log.warning("  eigenvector_centrality did not converge, falling back to numpy")
-        eig_cent = nx.eigenvector_centrality_numpy(G_und, weight="weight")
-    log.info("  %.1fs", time.time() - t0)
+    # ── 6. Eigenvector (undirected, numpy fallback) ──────────────────────────
+    if "Eigenvector" in _req:
+        log.info("Eigenvector centrality...")
+        t0 = time.time()
+        try:
+            eig_cent = nx.eigenvector_centrality(
+                G_und, weight="weight", max_iter=500, tol=1e-6)
+        except nx.PowerIterationFailedConvergence:
+            log.warning("  eigenvector_centrality did not converge, falling back to numpy")
+            eig_cent = nx.eigenvector_centrality_numpy(G_und, weight="weight")
+        log.info("  %.1fs", time.time() - t0)
 
-    # ── 6. Katz ──────────────────────────────────────────────────────────────
-    log.info("Katz centrality...")
-    t0 = time.time()
-    max_deg   = max((G.degree(n) for n in G.nodes()), default=1)
-    alpha_katz = 0.85 / max_deg          # always < 1/lambda_max (safe bound)
-    try:
-        katz_cent = nx.katz_centrality(
-            G, alpha=alpha_katz, weight="weight",
-            normalized=True, max_iter=1000, tol=1e-6)
-    except nx.PowerIterationFailedConvergence:
-        log.warning("  Katz did not converge — using numpy solver")
-        katz_cent = nx.katz_centrality_numpy(G, alpha=alpha_katz, weight="weight")
-    log.info("  %.1fs  alpha=%.2e", time.time() - t0, alpha_katz)
+    # ── 7. Katz ──────────────────────────────────────────────────────────────
+    if "Katz" in _req:
+        log.info("Katz centrality...")
+        t0 = time.time()
+        max_deg    = max((G.degree(v) for v in G.nodes()), default=1)
+        alpha_katz = 0.85 / max_deg
+        try:
+            katz_cent = nx.katz_centrality(
+                G, alpha=alpha_katz, weight="weight",
+                normalized=True, max_iter=1000, tol=1e-6)
+        except nx.PowerIterationFailedConvergence:
+            log.warning("  Katz did not converge — using numpy solver")
+            katz_cent = nx.katz_centrality_numpy(G, alpha=alpha_katz, weight="weight")
+        log.info("  %.1fs  alpha=%.2e", time.time() - t0, alpha_katz)
 
-    # ── 9. Clustering coefficient (undirected, weighted) ─────────────────────
-    log.info("Clustering coefficient...")
-    t0 = time.time()
-    clust_cent = nx.clustering(G_und, weight="weight")
-    log.info("  %.1fs", time.time() - t0)
+    # ── 8. Clustering coefficient ────────────────────────────────────────────
+    if "Clustering" in _req:
+        log.info("Clustering coefficient...")
+        t0 = time.time()
+        clust_cent = nx.clustering(G_und, weight="weight")
+        log.info("  %.1fs", time.time() - t0)
 
-    # ── 10. Triangle count (undirected) ──────────────────────────────────────
-    log.info("Triangle count...")
-    t0 = time.time()
-    tri_count = nx.triangles(G_und)
-    log.info("  %.1fs", time.time() - t0)
+    # ── 9. Triangle count ────────────────────────────────────────────────────
+    if "Triangles" in _req:
+        log.info("Triangle count...")
+        t0 = time.time()
+        tri_count = nx.triangles(G_und)
+        log.info("  %.1fs", time.time() - t0)
 
-    # ── 11 & 12. HITS hub + authority ────────────────────────────────────────
-    log.info("HITS (hub + authority)...")
-    t0 = time.time()
-    try:
-        hits_hub, hits_auth = nx.hits(G_nsl, max_iter=1000, tol=1e-6)
-    except nx.PowerIterationFailedConvergence:
-        log.warning("  HITS did not converge — setting scores to 0")
-        zeros     = {n: 0.0 for n in G.nodes()}
-        hits_hub  = zeros.copy()
-        hits_auth = zeros.copy()
-    log.info("  %.1fs", time.time() - t0)
+    # ── 10. HITS hub + authority ─────────────────────────────────────────────
+    if _needs_nsl:
+        log.info("HITS (hub + authority)...")
+        t0 = time.time()
+        try:
+            hits_hub, hits_auth = nx.hits(G_nsl, max_iter=1000, tol=1e-6)
+        except nx.PowerIterationFailedConvergence:
+            log.warning("  HITS did not converge — setting scores to 0")
+            zeros     = {v: 0.0 for v in G.nodes()}
+            hits_hub  = zeros.copy()
+            hits_auth = zeros.copy()
+        log.info("  %.1fs", time.time() - t0)
 
     # ── Assemble DataFrame ───────────────────────────────────────────────────
     def _depth(node):
@@ -215,32 +240,34 @@ def compute_all_centralities(
         except (IndexError, ValueError):
             return 0.0
 
-    rows = [
-        {
-            "cell_id":     node,
-            "lat":         G.nodes[node]["lat"],
-            "lon":         G.nodes[node]["lon"],
-            "depth_km":    _depth(node),
-            "In_Degree":   in_deg_cent.get(node, 0.0),
-            "Out_Degree":  out_deg_cent.get(node, 0.0),
-            "Degree":      deg_cent.get(node, 0.0),
-            "PageRank":    pr_cent.get(node, 0.0),
-            "Harmonic":    harm_cent.get(node, 0.0),
-            "Closeness":   close_cent.get(node, 0.0),
-            "Betweenness": bet_cent.get(node, 0.0),
-            "Eigenvector": eig_cent.get(node, 0.0),
-            "Katz":        katz_cent.get(node, 0.0),
-            "HITS_Hub":    hits_hub.get(node, 0.0),
-            "HITS_Auth":   hits_auth.get(node, 0.0),
-            "Clustering":  clust_cent.get(node, 0.0),
-            "Triangles":   float(tri_count.get(node, 0)),
+    rows = []
+    for node in G.nodes():
+        if "lat" not in G.nodes[node] or "lon" not in G.nodes[node]:
+            continue
+        row: dict = {
+            "cell_id":  node,
+            "lat":      G.nodes[node]["lat"],
+            "lon":      G.nodes[node]["lon"],
+            "depth_km": _depth(node),
         }
-        for node in G.nodes()
-        if "lat" in G.nodes[node] and "lon" in G.nodes[node]
-    ]
+        if "In_Degree"   in _req: row["In_Degree"]   = in_deg_cent.get(node, 0.0)
+        if "Out_Degree"  in _req: row["Out_Degree"]  = out_deg_cent.get(node, 0.0)
+        if "Degree"      in _req: row["Degree"]      = deg_cent.get(node, 0.0)
+        if "PageRank"    in _req: row["PageRank"]    = pr_cent.get(node, 0.0)
+        if "Harmonic"    in _req: row["Harmonic"]    = harm_cent.get(node, 0.0)
+        if "Closeness"   in _req: row["Closeness"]   = close_cent.get(node, 0.0)
+        if "Betweenness" in _req: row["Betweenness"] = bet_cent.get(node, 0.0)
+        if "Eigenvector" in _req: row["Eigenvector"] = eig_cent.get(node, 0.0)
+        if "Katz"        in _req: row["Katz"]        = katz_cent.get(node, 0.0)
+        if "HITS_Hub"    in _req: row["HITS_Hub"]    = hits_hub.get(node, 0.0)
+        if "HITS_Auth"   in _req: row["HITS_Auth"]   = hits_auth.get(node, 0.0)
+        if "Clustering"  in _req: row["Clustering"]  = clust_cent.get(node, 0.0)
+        if "Triangles"   in _req: row["Triangles"]   = float(tri_count.get(node, 0))
+        rows.append(row)
 
     df = pd.DataFrame(rows)
-    log.info("Centrality complete: %d nodes, %.1fs total", len(df), time.time() - t_total)
+    log.info("Centrality complete: %d nodes, %d measures, %.1fs total",
+             len(df), len(_req), time.time() - t_total)
     return df
 
 
