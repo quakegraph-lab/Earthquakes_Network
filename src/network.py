@@ -23,6 +23,7 @@ def discretize_space_3d(
     df: pd.DataFrame,
     cell_size_km: float,
     target_crs: str = "epsg:5070",
+    info=True
 ) -> pd.DataFrame:
     """
     Project geographic coordinates to metric space and assign each earthquake
@@ -54,7 +55,7 @@ def discretize_space_3d(
     Horizontal origin is shifted so that (cell_x, cell_y) ≥ 0 everywhere;
     depth is *not* shifted so that cell_z preserves physical meaning.
     """
-    log.info("Projecting to %s, cell size %d km ...", target_crs, cell_size_km)
+    if info == True:  log.info("Projecting to %s, cell size %d km ...", target_crs, cell_size_km)
 
     transformer = Transformer.from_crs("epsg:4326", target_crs, always_xy=True)
     x_m, y_m = transformer.transform(df["longitude"].values, df["latitude"].values)
@@ -84,6 +85,7 @@ def build_abe_suzuki_network(
     df: pd.DataFrame,
     cell_size_km: float,
     target_crs: str = "epsg:5070",
+    info = True
 ) -> nx.DiGraph:
     """
     Build the Abe-Suzuki directed network from a chronologically sorted
@@ -119,7 +121,7 @@ def build_abe_suzuki_network(
     """
     t0 = time.time()
 
-    df_grid = discretize_space_3d(df, cell_size_km, target_crs=target_crs)
+    df_grid = discretize_space_3d(df, cell_size_km, target_crs=target_crs, info=info)
     seq = df_grid["cell_id"].tolist()
 
     G: nx.DiGraph = nx.DiGraph()
@@ -150,7 +152,7 @@ def build_abe_suzuki_network(
         G.nodes[node]["lat"] = float(lat)
         G.nodes[node]["lon"] = float(lon)
 
-    log.info(
+    if info == True:  log.info(
         "Network (%d km, %s): %d nodes, %d edges, %d self-loops — %.1fs",
         cell_size_km,
         target_crs,
