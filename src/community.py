@@ -40,7 +40,10 @@ from sklearn.preprocessing import normalize
 
 from src.plotutils import savefig, save_plotly, _slug
 
-from src.network import discretize_space_3d
+from src.network import (
+    build_abe_suzuki_network,
+    discretize_space_3d
+)
 
 log = logging.getLogger(__name__)
 
@@ -356,6 +359,57 @@ def run_dbscan_earthquakes(
     return df_out
 
 
+# def plot_dbscan_geo(
+#     df: pd.DataFrame,
+#     title: str = "",
+#     center_lat: float = 41.9,
+#     center_lon: float = 12.5,
+#     zoom: float = 4,
+#     min_cluster_size: int = 50,
+#     height: int = 600,
+#     width: int = 1100,
+# ):
+#     """
+#     Plot DBSCAN clusters on map using earthquake points.
+#     """
+
+#     # remove noise
+#     df_plot = df[df["cluster"] != -1].copy()
+
+#     # filter small clusters
+#     counts = df_plot["cluster"].value_counts()
+#     large = counts[counts >= min_cluster_size].index
+#     df_plot = df_plot[df_plot["cluster"].isin(large)]
+
+#     n_clusters = df_plot["cluster"].nunique()
+
+#     # size ~ magnitude (nice physical meaning)
+#     df_plot["size"] = df_plot["magnitude"]
+
+#     fig = px.scatter_map(
+#         df_plot,
+#         lat="latitude",
+#         lon="longitude",
+#         color=df_plot["cluster"].astype(str),
+#         color_discrete_sequence=px.colors.qualitative.Light24,  # <-- Broadest built-in palette (24 unique colors)
+#         size="size",
+#         size_max=12,
+#         map_style="carto-positron",
+#         title=f"DBSCAN Clusters ({n_clusters} clusters) — {title}",
+#         hover_data={"magnitude": True, "depth_km": True, "cluster": True},
+#     )
+
+#     fig.update_layout(
+#         map=dict(center={"lat": center_lat, "lon": center_lon}, zoom=zoom),
+#         width=width,
+#         height=height,
+#         margin={"r":0,"t":40,"l":0,"b":0},
+#     )
+
+#     fig.show()
+
+
+# ALTERNATIVE:
 def plot_dbscan_geo(
     df: pd.DataFrame,
     title: str = "",
@@ -370,36 +424,35 @@ def plot_dbscan_geo(
     Plot DBSCAN clusters on map using earthquake points.
     """
 
-    # remove noise
     df_plot = df[df["cluster"] != -1].copy()
 
-    # filter small clusters
     counts = df_plot["cluster"].value_counts()
     large = counts[counts >= min_cluster_size].index
     df_plot = df_plot[df_plot["cluster"].isin(large)]
 
-    n_clusters = df_plot["cluster"].nunique()
+    # remap clusters to consecutive integers
+    clusters = df_plot["cluster"].unique()
+    cluster_map = {c: i for i, c in enumerate(clusters)}
+    df_plot["cluster_id"] = df_plot["cluster"].map(cluster_map)
 
-    # size ~ magnitude (nice physical meaning)
+    n_clusters = len(clusters)
     df_plot["size"] = df_plot["magnitude"]
 
     fig = px.scatter_map(
         df_plot,
         lat="latitude",
         lon="longitude",
-        color=df_plot["cluster"].astype(str),
+        color="cluster_id",
+        color_continuous_scale=px.colors.sequential.Turbo,  # 🔥 best high-contrast palette
         size="size",
         size_max=12,
         map_style="carto-positron",
-        title=f"DBSCAN Clusters ({n_clusters} clusters ≥ {min_cluster_size}) — {title}",
-        hover_data={
-            "magnitude": True,
-            "depth_km": True,
-            "cluster": True
-        },
+        title=f"DBSCAN Clusters ({n_clusters} clusters) — {title}",
+        hover_data={"magnitude": True, "depth_km": True, "cluster": True},
     )
 
     fig.update_layout(
+        coloraxis_colorbar=dict(title="Cluster ID"),
         map=dict(center={"lat": center_lat, "lon": center_lon}, zoom=zoom),
         width=width,
         height=height,
@@ -569,3 +622,97 @@ def plot_community_geo(
     fig.show()
 
 
+
+
+# =======================================================================
+
+
+def compute_modularity_from_partition(G: nx.DiGraph, partition: dict) -> float:
+    """
+    Compute modularity on undirected version of G using a given partition.
+    """
+    G_und = G.to_undirected()
+
+    communities = {}
+    for node, cid in partition.items():
+        communities.setdefault(cid, set()).add(node)
+
+    comm_list = list(communities.values())
+
+    return nx.algorithms.community.quality.modularity(
+        G_und, comm_list, weight="weight"
+    )
+
+
+
+
+def build_window_network(df, start, end, cell_size_km=10):
+    """
+    Build Abe-Suzuki network for a time window.
+    """
+    df_win = df[(df["time"] >= start) & (df["time"] < end)].copy()
+
+    if len(df_win) < 50:
+        return None  # too small → unstable network
+
+    G = build_abe_suzuki_network(df_win, cell_size_km=cell_size_km, info=False)
+
+    return G
+
+
+
+
+
+
+def compute_q_over_time(
+    df,
+    window_days=10,
+    step_days=1,
+    cell_size_km=10,
+    start_time=None,
+    end_time=None
+):
+    """
+    Compute modularity evolution Q(t) using sliding windows.
+    """
+
+    results = []
+
+    if start_time is None:
+        start_time = df["time"].min()
+
+    if end_time is None:
+        end_time = df["time"].max()
+
+    current = start_time
+
+    while current + pd.Timedelta(days=window_days) <= end_time:
+
+        start = current
+        end = current + pd.Timedelta(days=window_days)
+
+        G = build_window_network(df, start, end, cell_size_km)
+
+        if G is None or G.number_of_edges() < 10:
+            current += pd.Timedelta(days=step_days)
+            continue
+
+        # --- Louvain (directed) ---
+        partition = run_louvain_directed(G, resolution=1.0)
+
+        # --- modularity ---
+        Q = compute_modularity_from_partition(G, partition)
+
+        # center time of window
+        t_center = start + pd.Timedelta(days=window_days / 2)
+
+        results.append({
+            "time": t_center,
+            "Q": Q,
+            "n_nodes": G.number_of_nodes(),
+            "n_edges": G.number_of_edges()
+        })
+
+        current += pd.Timedelta(days=step_days)
+
+    return pd.DataFrame(results)
