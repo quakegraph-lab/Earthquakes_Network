@@ -145,7 +145,8 @@ def build_abe_suzuki_network_custom(
         dr = np.sqrt(dx**2 + dy**2)
 
         # Weight components
-        mag_weight = 10 ** (alpha * mags[i])
+        # mag_weight = 10 ** (alpha * mags[i])                        # source-based version
+        mag_weight = 10 ** (alpha * (mags[i] + mags[i+1]) / 2)      # pair-based version (so both source and target earthquakes)
         time_weight = np.exp(-dt / tau)
         space_weight = np.exp(-dr / r0)
 
