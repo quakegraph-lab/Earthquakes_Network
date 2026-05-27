@@ -160,3 +160,49 @@ def verify_balanced_degrees(G: nx.DiGraph) -> bool | list:
         return True
     log.warning("Found %d unbalanced nodes.", len(unbalanced))
     return unbalanced
+
+
+
+
+
+
+# =================================================================================
+# =================================================================================
+# ======================== HYBRID PART ============================================
+# =================================================================================
+# =================================================================================
+
+
+
+
+def estimate_gamma_mle_hybrid(strengths: list[float], k_min: float) -> float:
+    """
+    Estimate power-law exponent γ from weighted node strengths
+    (hybrid Abe–Suzuki network).
+
+    Parameters
+    ----------
+    strengths : list of float
+        Node strength (weighted degree) values.
+    k_min : float
+        Lower cutoff for tail fitting.
+
+    Returns
+    -------
+    float
+        MLE estimate of γ.
+    """
+    arr = np.asarray(strengths, dtype=float)
+    tail = arr[arr >= k_min]
+
+    if len(tail) < 2:
+        return float("nan")
+
+    try:
+        import powerlaw as _pw
+        fit = _pw.Fit(tail, xmin=k_min, discrete=False)  # IMPORTANT CHANGE
+        return float(fit.alpha)
+
+    except Exception:
+        n = len(tail)
+        return 1.0 + n / np.sum(np.log(tail / k_min))
