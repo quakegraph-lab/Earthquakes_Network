@@ -82,7 +82,10 @@ def discretize_space_3d(
     )
 
 
-# ============================================================================    
+
+
+    
+# ============================ SOFT VERSION ================================================ 
 
 
 def build_abe_suzuki_network_custom(
@@ -199,7 +202,8 @@ def build_abe_suzuki_network_custom(
 
 
 
-    # ==============================================================================00000
+# ============================ HARD VERSION ================================================
+
 
 def haversine_km(lat1, lon1, lat2, lon2):
     """Compute great-circle distance in km."""
@@ -293,6 +297,130 @@ def build_abe_suzuki_network_custom_hard(
             f"{G.number_of_nodes()} nodes, "
             f"{G.number_of_edges()} edges, "
             f"{nx.number_of_selfloops(G)} self-loops, "
+            f"time {time.time() - t0:.2f}s"
+        )
+
+    return G
+
+
+
+
+
+
+
+
+# ============================ HYBRID VERSION ================================================
+
+def build_abe_suzuki_network_custom_hybrid(
+    df: pd.DataFrame,
+    cell_size_km: float,
+    spatial_threshold_km: float = 100.0,   # HARD filter (looser than pure hard version)
+    time_threshold_sec: float = 48 * 3600, # HARD filter
+    target_crs: str = "epsg:5070",
+    alpha: float = 0.7,        # magnitude scaling
+    tau: float = 86400.0,      # temporal decay (seconds)
+    r0: float = 10.0,          # spatial decay (km)
+    info: bool = True
+) -> nx.DiGraph:
+
+    t0 = time.time()
+
+    # Discretize space
+    df_grid = discretize_space_3d(df, cell_size_km, target_crs=target_crs, info=info)
+
+    # Extract sequences
+    seq = df_grid["cell_id"].values
+    times = df_grid["time"].values
+    mags = df_grid["magnitude"].values
+
+    # Coordinates (projected, km)
+    x = df_grid["x_km"].values
+    y = df_grid["y_km"].values
+
+    # Lat/lon (for hard filtering)
+    lat = df_grid["latitude"].values
+    lon = df_grid["longitude"].values
+
+    # Graph
+    G = nx.DiGraph()
+    G.add_nodes_from(set(seq))
+
+    edge_weights = {}
+
+    for i in range(len(df_grid) - 1):
+
+        # --- TIME DIFFERENCE ---
+        dt = (times[i + 1] - times[i]) / np.timedelta64(1, 's')
+
+        if dt > time_threshold_sec:
+            continue
+
+        # --- SPACE DIFFERENCE (HARD FILTER via haversine) ---
+        dist = haversine_km(lat[i], lon[i], lat[i+1], lon[i+1])
+
+        if dist > spatial_threshold_km:
+            continue
+
+        # --- EDGE ---
+        u = seq[i]
+        v = seq[i + 1]
+
+        # --- SOFT WEIGHTS (same as soft version) ---
+
+        # magnitude (pair-based)
+        mag_weight = 10 ** (alpha * (mags[i] + mags[i+1]) / 2)
+
+        # temporal decay
+        time_weight = np.exp(-dt / tau)
+
+        # spatial decay (use projected coords for consistency with soft version)
+        dx = x[i + 1] - x[i]
+        dy = y[i + 1] - y[i]
+        dr = np.sqrt(dx**2 + dy**2)
+
+        space_weight = np.exp(-dr / r0)
+
+        w = mag_weight * time_weight * space_weight
+
+        # accumulate
+        if (u, v) in edge_weights:
+            edge_weights[(u, v)] += w
+        else:
+            edge_weights[(u, v)] = w
+
+    # Add edges
+    G.add_weighted_edges_from((u, v, w) for (u, v), w in edge_weights.items())
+
+    # --- Node positions  ---
+    inv = Transformer.from_crs(target_crs, "epsg:4326", always_xy=True)
+    x_origin = df_grid["x_km"].min()
+    y_origin = df_grid["y_km"].min()
+
+    cell_info = (
+        df_grid[["cell_id", "cell_x", "cell_y"]]
+        .drop_duplicates("cell_id")
+        .set_index("cell_id")
+    )
+
+    for node in G.nodes():
+        if node not in cell_info.index:
+            continue
+
+        cx = cell_info.at[node, "cell_x"]
+        cy = cell_info.at[node, "cell_y"]
+
+        x_m = ((cx + 0.5) * cell_size_km + x_origin) * 1000.0
+        y_m = ((cy + 0.5) * cell_size_km + y_origin) * 1000.0
+
+        lon_, lat_ = inv.transform(x_m, y_m)
+        G.nodes[node]["lat"] = float(lat_)
+        G.nodes[node]["lon"] = float(lon_)
+
+    if info:
+        print(
+            f"Hybrid Abe-Suzuki: "
+            f"{G.number_of_nodes()} nodes, "
+            f"{G.number_of_edges()} edges, "
             f"time {time.time() - t0:.2f}s"
         )
 
