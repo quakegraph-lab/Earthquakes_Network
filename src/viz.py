@@ -187,8 +187,8 @@ def analyze_degree_distribution_log_binning(
 
     Log-binning normalises by bin width, giving probability *density* P(k).
     When ``gamma_mle`` is supplied the amplitude is fitted by least-squares
-    on the log-binned tail ($k \geq$ ``k_min_fit``) while the slope is fixed
-    to the MLE exponent — giving a visually honest fit without OLS bias.
+    on the log-binned tail ($k \\geq$ ``k_min_fit``) while the slope is fixed
+    to the MLE exponent, so the line reflects the MLE rather than an OLS fit.
 
     Parameters
     ----------
@@ -258,7 +258,7 @@ def plot_ccdf_with_fit(
     """
     CCDF of node degree with optional MLE power-law fit.
 
-    For $P(k) \propto k^{-\gamma}$ the CCDF scales as $k^{-(\gamma-1)}$.
+    For $P(k) \\propto k^{-\\gamma}$ the CCDF scales as $k^{-(\\gamma-1)}$.
     When ``gamma_mle`` is supplied the amplitude is fitted on the tail while
     the slope is fixed — giving a clean MLE-anchored overlay.
 
@@ -310,21 +310,6 @@ def plot_ccdf_with_fit(
     plt.show()
 
     print(f"[{title}] CCDF plotted.")
-
-
-
-
-
-
-
-# =================================================================================
-# =================================================================================
-# ======================== HYBRID PART ============================================
-# =================================================================================
-# =================================================================================
-
-
-
 def analyze_in_out_degree_distribution_hybrid(
     G: nx.DiGraph,
     title: str,

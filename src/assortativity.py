@@ -43,7 +43,6 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from scipy.stats import pearsonr
 
 from src.plotutils import savefig, save_plotly, _slug
 
@@ -154,7 +153,7 @@ def analyze_degree_correlations(
     if has_fit:
         k_line = np.linspace(df_fit["k"].min(), k_str, 200)
         knn_fit = np.exp(b) * k_line**mu
-        plt.plot(k_line, knn_fit, "mediumpurple", ls="--", linewidth=2, zorder=5, label=f"Intrinsic Fit ($\mu$ = {mu:.3f})")
+        plt.plot(k_line, knn_fit, "mediumpurple", ls="--", linewidth=2, zorder=5, label=f"Intrinsic Fit ($\\mu$ = {mu:.3f})")
         
     # Vertical line for the structural cutoff in dashed red
     plt.axvline(k_str, color="red", linestyle="--", linewidth=1.5, label=f"Structural Cutoff ($k_{{str}}$ = {k_str:.1f})")
@@ -305,7 +304,7 @@ def run_binned_randomization_test(
     plt.scatter(df_bin_orig["k"], df_bin_orig["knn"], color="purple", alpha=0.9, s=40, edgecolor="black", zorder=4, label="Original Binned")
     if not np.isnan(mu_orig):
         k_line_orig = np.linspace(df_bin_orig[ df_bin_orig["k"] < k_str]["k"].min(), k_str, 200)
-        plt.plot(k_line_orig, np.exp(b_orig) * k_line_orig**mu_orig, color="mediumpurple", ls="--" ,linewidth=2, zorder=5, label=f"Original Fit ($\mu$ = {mu_orig:.3f})")
+        plt.plot(k_line_orig, np.exp(b_orig) * k_line_orig**mu_orig, color="mediumpurple", ls="--", linewidth=2, zorder=5, label=f"Original Fit ($\\mu$ = {mu_orig:.3f})")
 
     # Plot Randomized Network Layer
     plt.scatter(df_bin_rand["k"], df_bin_rand["knn"], color="darkorange", alpha=0.9, s=40, marker="D", edgecolor="black", zorder=4, label="Rewired Binned")
@@ -313,7 +312,7 @@ def run_binned_randomization_test(
         # We perform the fit completely without plotting the actual line if strictly requested, 
         # but plotting it helps visual diagnosis. If you prefer to hide the orange dashed line, comment out the next two lines:
         k_line_rand = np.linspace(df_bin_rand[df_bin_rand["k"] < k_str]["k"].min(), k_str, 200)
-        plt.plot(k_line_rand, np.exp(b_rand) * k_line_rand**mu_rand, color="orange", linestyle=":", linewidth=2, zorder=5, label=f"Rewired Fit ($\mu$ = {mu_rand:.3f})")
+        plt.plot(k_line_rand, np.exp(b_rand) * k_line_rand**mu_rand, color="orange", linestyle=":", linewidth=2, zorder=5, label=f"Rewired Fit ($\\mu$ = {mu_rand:.3f})")
 
     # Structural Cutoff Line
     plt.axvline(k_str, color="red", linestyle="-.", linewidth=1.5, label=f"Structural Cutoff ($k_{{str}}$ = {k_str:.1f})")

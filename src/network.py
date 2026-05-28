@@ -23,7 +23,7 @@ def discretize_space_3d(
     df: pd.DataFrame,
     cell_size_km: float,
     target_crs: str = "epsg:5070",
-    info=True
+    info: bool = True,
 ) -> pd.DataFrame:
     """
     Project geographic coordinates to metric space and assign each earthquake
@@ -55,7 +55,8 @@ def discretize_space_3d(
     Horizontal origin is shifted so that (cell_x, cell_y) ≥ 0 everywhere;
     depth is *not* shifted so that cell_z preserves physical meaning.
     """
-    if info == True:  log.info("Projecting to %s, cell size %d km ...", target_crs, cell_size_km)
+    if info:
+        log.info("Projecting to %s, cell size %d km ...", target_crs, cell_size_km)
 
     transformer = Transformer.from_crs("epsg:4326", target_crs, always_xy=True)
     x_m, y_m = transformer.transform(df["longitude"].values, df["latitude"].values)
@@ -85,7 +86,7 @@ def build_abe_suzuki_network(
     df: pd.DataFrame,
     cell_size_km: float,
     target_crs: str = "epsg:5070",
-    info = True
+    info: bool = True,
 ) -> nx.DiGraph:
     """
     Build the Abe-Suzuki directed network from a chronologically sorted
@@ -152,13 +153,14 @@ def build_abe_suzuki_network(
         G.nodes[node]["lat"] = float(lat)
         G.nodes[node]["lon"] = float(lon)
 
-    if info == True:  log.info(
-        "Network (%d km, %s): %d nodes, %d edges, %d self-loops — %.1fs",
-        cell_size_km,
-        target_crs,
-        G.number_of_nodes(),
-        G.number_of_edges(),
-        nx.number_of_selfloops(G),
-        time.time() - t0,
-    )
+    if info:
+        log.info(
+            "Network (%d km, %s): %d nodes, %d edges, %d self-loops — %.1fs",
+            cell_size_km,
+            target_crs,
+            G.number_of_nodes(),
+            G.number_of_edges(),
+            nx.number_of_selfloops(G),
+            time.time() - t0,
+        )
     return G

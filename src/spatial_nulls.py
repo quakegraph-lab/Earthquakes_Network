@@ -11,7 +11,7 @@ d_ij = great-circle distance between cell centroids (km).  Parameters
 
 The *structural excess* w_ij / λ_ij flags transitions stronger than
 geography and local activity can explain — candidate long-range
-stress-transfer corridors that are genuinely non-trivial network features.
+stress-transfer corridors.
 
 References
 ----------

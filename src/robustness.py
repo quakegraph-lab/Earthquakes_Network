@@ -99,8 +99,6 @@ def simulate_robustness(
     )
 
     H = G.copy()
-    initial_gcc = max(len(c) for c in nx.connected_components(H))
-
     records = []
     removed = 0
 

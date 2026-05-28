@@ -1,316 +1,293 @@
 """
-Network construction functions for the Abe-Suzuki earthquake network.
+Custom variants of the Abe-Suzuki earthquake network.
+
+Both builders modify the original construction in two ways requested by the
+project brief:
+
+1. **Link criterion** — a threshold on the spatial and/or temporal distance
+   between an earthquake and the next one (whether a link is created at all).
+2. **Edge weights** — magnitude is folded into the weight so that links
+   between strong events stand out, instead of the weight being a pure
+   transition count.
+
+Two strategies are provided:
+
+* :func:`build_abe_suzuki_network_custom` — *soft* model.  No edge is ever
+  deleted; instead each transition is down-weighted by smooth exponential
+  decays in time and space, and up-weighted by the Gutenberg-Richter energy
+  proxy of the pair.  Avoids the arbitrary discontinuities of a hard cut and
+  preserves physically real long-range triggering.
+
+      w_ij ∝ Σ 10^(α·(M_i+M_j)/2) · exp(-Δt/τ) · exp(-Δr/r₀)
+
+* :func:`build_abe_suzuki_network_custom_hard` — *hard* model.  A consecutive
+  pair is linked only if Δt ≤ ``time_threshold_sec`` **and** great-circle
+  Δr ≤ ``spatial_threshold_km``; surviving links keep the original
+  transition-count weight.  Simple and interpretable, at the cost of
+  sensitivity to the threshold choice.
 
 References
 ----------
 Abe, S., & Suzuki, N. (2004). Scale-free network of earthquakes.
 Europhysics Letters, 65(4), 581-586.
+
+Gutenberg, B., & Richter, C. F. (1944). Frequency of earthquakes in
+California. Bulletin of the Seismological Society of America, 34(4), 185-188.
 """
 
 import logging
 import time
-from collections import Counter
 
 import networkx as nx
 import numpy as np
 import pandas as pd
 from pyproj import Transformer
 
+# Re-export so notebooks can do `from src.network_custom import discretize_space_3d`.
+from src.network import discretize_space_3d  # noqa: F401
+
 log = logging.getLogger(__name__)
 
 
-
-def discretize_space_3d(
-    df: pd.DataFrame,
-    cell_size_km: float,
-    target_crs: str = "epsg:5070",
-    info=True
-) -> pd.DataFrame:
+def haversine_km(
+    lat1: np.ndarray | float,
+    lon1: np.ndarray | float,
+    lat2: np.ndarray | float,
+    lon2: np.ndarray | float,
+) -> np.ndarray | float:
     """
-    Project geographic coordinates to metric space and assign each earthquake
-    to a cubic grid cell.
+    Great-circle distance between two points (or two coordinate arrays).
 
     Parameters
     ----------
-    df : pd.DataFrame
-        Earthquake catalog with columns ``latitude``, ``longitude``,
-        ``depth_km``.
-    cell_size_km : float
-        Edge length of each cubic cell in kilometres.
-    target_crs : str
-        Projected CRS for metric conversion. Default ``"epsg:5070"`` (NAD83 /
-        CONUS Albers Equal Area) is correct for the US catalog. Use
-        ``"epsg:32632"`` (UTM Zone 32N) for the Italy catalog.
+    lat1, lon1, lat2, lon2 : array_like or float
+        Latitudes and longitudes in decimal degrees.  Broadcasting follows
+        NumPy rules, so passing equal-length arrays returns the element-wise
+        distance between paired points.
 
     Returns
     -------
-    pd.DataFrame
-        New DataFrame (original unchanged) with added columns ``cell_x``,
-        ``cell_y``, ``cell_z``, ``cell_id`` (string key ``"cx_cy_cz"``),
-        and ``x_km`` / ``y_km`` (projected metric coordinates, unshifted).
-
-    Notes
-    -----
-    Negative depths (surface-drift artefacts) are kept; they map to
-    ``cell_z = -1``.
-    Horizontal origin is shifted so that (cell_x, cell_y) ≥ 0 everywhere;
-    depth is *not* shifted so that cell_z preserves physical meaning.
+    np.ndarray or float
+        Distance(s) in kilometres (Earth radius 6371 km).
     """
-    if info == True:  log.info("Projecting to %s, cell size %d km ...", target_crs, cell_size_km)
+    R = 6371.0
+    phi1, phi2 = np.radians(lat1), np.radians(lat2)
+    dphi = np.radians(np.asarray(lat2) - np.asarray(lat1))
+    dlambda = np.radians(np.asarray(lon2) - np.asarray(lon1))
 
-    transformer = Transformer.from_crs("epsg:4326", target_crs, always_xy=True)
-    x_m, y_m = transformer.transform(df["longitude"].values, df["latitude"].values)
+    a = np.sin(dphi / 2.0) ** 2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlambda / 2.0) ** 2
+    return 2 * R * np.arcsin(np.sqrt(a))
 
-    x_km = x_m / 1000.0
-    y_km = y_m / 1000.0
-    z_km = df["depth_km"].values
 
-    x_shifted = x_km - x_km.min()
-    y_shifted = y_km - y_km.min()
+def _assign_node_coords(
+    G: nx.DiGraph,
+    df_grid: pd.DataFrame,
+    cell_size_km: float,
+    target_crs: str,
+) -> None:
+    """
+    Attach ``lat``/``lon`` attributes to every node, in place.
 
-    cx = pd.Series(np.floor(x_shifted / cell_size_km).astype(int), index=df.index)
-    cy = pd.Series(np.floor(y_shifted / cell_size_km).astype(int), index=df.index)
-    cz = pd.Series(np.floor(z_km      / cell_size_km).astype(int), index=df.index)
+    Each node id is a ``"cx_cy_cz"`` cell key; the cell centre is inverse-
+    projected from ``target_crs`` back to EPSG:4326 (lon/lat).  Mirrors the
+    centroid logic in :func:`src.network.build_abe_suzuki_network`.
+    """
+    inv = Transformer.from_crs(target_crs, "epsg:4326", always_xy=True)
+    x_origin = df_grid["x_km"].min()
+    y_origin = df_grid["y_km"].min()
 
-    return df.assign(
-        x_km=pd.Series(x_km, index=df.index),
-        y_km=pd.Series(y_km, index=df.index),
-        cell_x=cx,
-        cell_y=cy,
-        cell_z=cz,
-        cell_id=cx.astype(str) + "_" + cy.astype(str) + "_" + cz.astype(str),
+    cell_info = (
+        df_grid[["cell_id", "cell_x", "cell_y"]]
+        .drop_duplicates("cell_id")
+        .set_index("cell_id")
     )
 
-
-
-
-    
-# ============================ SOFT VERSION ================================================ 
+    for node in G.nodes():
+        if node not in cell_info.index:
+            continue
+        cx = cell_info.at[node, "cell_x"]
+        cy = cell_info.at[node, "cell_y"]
+        x_m = ((cx + 0.5) * cell_size_km + x_origin) * 1000.0
+        y_m = ((cy + 0.5) * cell_size_km + y_origin) * 1000.0
+        lon, lat = inv.transform(x_m, y_m)
+        G.nodes[node]["lat"] = float(lat)
+        G.nodes[node]["lon"] = float(lon)
 
 
 def build_abe_suzuki_network_custom(
     df: pd.DataFrame,
     cell_size_km: float,
     target_crs: str = "epsg:5070",
-    alpha: float = 0.7,        # magnitude scaling
-    tau: float = 86400.0,      # temporal scale (seconds) ~ 1 day
-    r0: float = 10.0,          # spatial scale (km)
-    info: bool = True
+    alpha: float = 0.7,
+    tau: float = 86400.0,
+    r0: float = 10.0,
+    info: bool = True,
 ) -> nx.DiGraph:
     """
-    Custom Abe-Suzuki network with weighted edges:
+    Soft (decay-weighted, magnitude-aware) Abe-Suzuki network.
 
-    w_ij ∝ Σ 10^(alpha * M_i) * exp(-Δt / tau) * exp(-Δr / r0)
+    No link is removed.  Each consecutive transition ``i -> i+1`` contributes a
+    weight that decays smoothly with the time and space separation of the two
+    events and grows with their Gutenberg-Richter energy:
+
+    .. math::
+
+        w_{ij} \\propto \\sum 10^{\\alpha (M_i + M_j)/2}\\;
+                          e^{-\\Delta t / \\tau}\\; e^{-\\Delta r / r_0}
+
+    Parallel transitions between the same ordered cell pair are summed.
 
     Parameters
     ----------
     df : pd.DataFrame
-        Must be sorted by time and include:
-        time, latitude, longitude, depth_km, magnitude
+        Catalog sorted by ``time`` with columns ``time``, ``latitude``,
+        ``longitude``, ``depth_km``, ``magnitude``.
+    cell_size_km : float
+        Cubic cell edge length in km.
+    target_crs : str
+        Projected CRS for the metric grid (``"epsg:32632"`` for Italy).
     alpha : float
-        Controls importance of magnitude
+        Magnitude scaling exponent; larger values amplify strong-event links.
     tau : float
-        Temporal decay scale (seconds)
+        Temporal decay scale in seconds (e.g. ``86400`` ≈ 1 day).
     r0 : float
-        Spatial decay scale (km)
+        Spatial decay scale in km.
+    info : bool
+        If True, log node/edge counts and elapsed time.
+
+    Returns
+    -------
+    nx.DiGraph
+        Directed weighted network; nodes carry ``lat``/``lon`` attributes.
+        Self-loops (consecutive events in the same cell) are kept.
     """
-
     t0 = time.time()
-
-    # Discretize space
     df_grid = discretize_space_3d(df, cell_size_km, target_crs=target_crs, info=info)
 
-    # Extract sequences
-    seq = df_grid["cell_id"].values
-    times = df_grid["time"].values
-    mags = df_grid["magnitude"].values
+    seq = df_grid["cell_id"].to_numpy()
+    times = df_grid["time"].to_numpy(dtype="datetime64[ns]")  # tz-aware → UTC naive
+    mags = df_grid["magnitude"].to_numpy(dtype=float)
+    x = df_grid["x_km"].to_numpy(dtype=float)
+    y = df_grid["y_km"].to_numpy(dtype=float)
 
-    # Use projected coordinates (already in km)
-    x = df_grid["x_km"].values
-    y = df_grid["y_km"].values
+    # Vectorised separations between consecutive events.
+    dt = (times[1:] - times[:-1]) / np.timedelta64(1, "s")
+    dr = np.hypot(x[1:] - x[:-1], y[1:] - y[:-1])
+
+    mag_weight = 10.0 ** (alpha * (mags[:-1] + mags[1:]) / 2.0)
+    w = mag_weight * np.exp(-dt / tau) * np.exp(-dr / r0)
+
+    edges = (
+        pd.DataFrame({"u": seq[:-1], "v": seq[1:], "w": w})
+        .groupby(["u", "v"], sort=False)["w"]
+        .sum()
+        .reset_index()
+    )
 
     G = nx.DiGraph()
     G.add_nodes_from(set(seq))
+    G.add_weighted_edges_from(edges.itertuples(index=False, name=None))
 
-    edge_weights = {}
-
-    # Loop over consecutive events
-    for i in range(len(df_grid) - 1):
-        u = seq[i]
-        v = seq[i + 1]
-
-        # Δt in seconds
-        dt = (times[i + 1] - times[i]) / np.timedelta64(1, 's')
-
-        # Δr in km (Euclidean in projected space)
-        dx = x[i + 1] - x[i]
-        dy = y[i + 1] - y[i]
-        dr = np.sqrt(dx**2 + dy**2)
-
-        # Weight components
-        # mag_weight = 10 ** (alpha * mags[i])                        # source-based version
-        mag_weight = 10 ** (alpha * (mags[i] + mags[i+1]) / 2)      # pair-based version (so both source and target earthquakes)
-        time_weight = np.exp(-dt / tau)
-        space_weight = np.exp(-dr / r0)
-
-        w = mag_weight * time_weight * space_weight
-
-        if (u, v) in edge_weights:
-            edge_weights[(u, v)] += w
-        else:
-            edge_weights[(u, v)] = w
-
-    # Add edges
-    G.add_weighted_edges_from((u, v, w) for (u, v), w in edge_weights.items())
-
-    # --- Node positions (same as before) ---
-    inv = Transformer.from_crs(target_crs, "epsg:4326", always_xy=True)
-    x_origin = df_grid["x_km"].min()
-    y_origin = df_grid["y_km"].min()
-
-    cell_info = (
-        df_grid[["cell_id", "cell_x", "cell_y"]]
-        .drop_duplicates("cell_id")
-        .set_index("cell_id")
-    )
-
-    for node in G.nodes():
-        if node not in cell_info.index:
-            continue
-        cx = cell_info.at[node, "cell_x"]
-        cy = cell_info.at[node, "cell_y"]
-
-        x_m = ((cx + 0.5) * cell_size_km + x_origin) * 1000.0
-        y_m = ((cy + 0.5) * cell_size_km + y_origin) * 1000.0
-
-        lon, lat = inv.transform(x_m, y_m)
-        G.nodes[node]["lat"] = float(lat)
-        G.nodes[node]["lon"] = float(lon)
+    _assign_node_coords(G, df_grid, cell_size_km, target_crs)
 
     if info:
         log.info(
-            "Custom Network (%d km): %d nodes, %d edges, %.1fs",
+            "Custom soft network (%d km): %d nodes, %d edges, %.1fs",
             cell_size_km,
             G.number_of_nodes(),
             G.number_of_edges(),
             time.time() - t0,
         )
-
     return G
-
-
-
-
-
-# ============================ HARD VERSION ================================================
-
-
-def haversine_km(lat1, lon1, lat2, lon2):
-    """Compute great-circle distance in km."""
-    R = 6371.0
-    phi1, phi2 = np.radians(lat1), np.radians(lat2)
-    dphi = np.radians(lat2 - lat1)
-    dlambda = np.radians(lon2 - lon1)
-
-    a = np.sin(dphi / 2.0)**2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlambda / 2.0)**2
-    return 2 * R * np.arcsin(np.sqrt(a))
 
 
 def build_abe_suzuki_network_custom_hard(
     df: pd.DataFrame,
     cell_size_km: float,
     spatial_threshold_km: float = 50.0,
-    time_threshold_sec: float = 24 * 3600,  # 1 day default
+    time_threshold_sec: float = 24 * 3600,
     target_crs: str = "epsg:5070",
-    info: bool = True
+    info: bool = True,
 ) -> nx.DiGraph:
+    """
+    Hard-threshold Abe-Suzuki network.
 
+    A consecutive pair ``i -> i+1`` is linked only when **both** the temporal
+    gap and the great-circle distance fall within the thresholds:
+
+        Δt ≤ ``time_threshold_sec``  and  Δr ≤ ``spatial_threshold_km``
+
+    Surviving links keep the original Abe-Suzuki transition-count weight
+    (number of times that ordered cell pair occurs as a kept transition).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Catalog with ``time``, ``latitude``, ``longitude``, ``depth_km``.
+        Re-sorted by ``time`` internally.
+    cell_size_km : float
+        Cubic cell edge length in km.
+    spatial_threshold_km : float
+        Maximum great-circle separation for a link.
+    time_threshold_sec : float
+        Maximum inter-event time for a link, in seconds.
+    target_crs : str
+        Projected CRS for cell centroids.
+    info : bool
+        If True, log node/edge/self-loop counts and elapsed time.
+
+    Returns
+    -------
+    nx.DiGraph
+        Directed weighted network; nodes carry ``lat``/``lon`` attributes.
+        Self-loops are kept.
+
+    Notes
+    -----
+    A hard cut introduces an arbitrary discontinuity and can sever physically
+    real long-range triggering; results are sensitive to the threshold values.
+    See :func:`build_abe_suzuki_network_custom` for a smooth alternative.
+    """
     t0 = time.time()
-
-    # ensure chronological order
     df = df.sort_values("time").reset_index(drop=True)
-
-    # spatial discretization
     df_grid = discretize_space_3d(df, cell_size_km, target_crs=target_crs, info=info)
 
-    seq = df_grid["cell_id"].tolist()
+    seq = df_grid["cell_id"].to_numpy()
+    times = df_grid["time"].to_numpy(dtype="datetime64[ns]")  # tz-aware → UTC naive
+    lat = df_grid["latitude"].to_numpy(dtype=float)
+    lon = df_grid["longitude"].to_numpy(dtype=float)
 
-    # build graph
-    G = nx.DiGraph()
-    G.add_nodes_from(set(seq))
+    dt = (times[1:] - times[:-1]) / np.timedelta64(1, "s")
+    dist = haversine_km(lat[:-1], lon[:-1], lat[1:], lon[1:])
 
-    edge_counts = Counter()
+    keep = (dt <= time_threshold_sec) & (dist <= spatial_threshold_km)
 
-    # iterate consecutive events with filtering
-    for i in range(len(df_grid) - 1):
-
-        t1 = pd.to_datetime(df_grid.loc[i, "time"])
-        t2 = pd.to_datetime(df_grid.loc[i + 1, "time"])
-
-        dt = (t2 - t1).total_seconds()
-
-        if dt > time_threshold_sec:
-            continue
-
-        lat1, lon1 = df_grid.loc[i, "latitude"], df_grid.loc[i, "longitude"]
-        lat2, lon2 = df_grid.loc[i + 1, "latitude"], df_grid.loc[i + 1, "longitude"]
-
-        dist = haversine_km(lat1, lon1, lat2, lon2)
-
-        if dist > spatial_threshold_km:
-            continue
-
-        u = seq[i]
-        v = seq[i + 1]
-
-        edge_counts[(u, v)] += 1
-
-    G.add_weighted_edges_from((u, v, w) for (u, v), w in edge_counts.items())
-
-    # node centroids (unchanged from original)
-    inv = Transformer.from_crs(target_crs, "epsg:4326", always_xy=True)
-    x_origin = df_grid["x_km"].min()
-    y_origin = df_grid["y_km"].min()
-
-    cell_info = (
-        df_grid[["cell_id", "cell_x", "cell_y"]]
-        .drop_duplicates("cell_id")
-        .set_index("cell_id")
+    edges = (
+        pd.DataFrame({"u": seq[:-1][keep], "v": seq[1:][keep]})
+        .groupby(["u", "v"], sort=False)
+        .size()
+        .reset_index(name="w")
     )
 
-    for node in G.nodes():
-        if node not in cell_info.index:
-            continue
-        cx = cell_info.at[node, "cell_x"]
-        cy = cell_info.at[node, "cell_y"]
+    G = nx.DiGraph()
+    G.add_nodes_from(set(seq))
+    G.add_weighted_edges_from(edges.itertuples(index=False, name=None))
 
-        x_m = ((cx + 0.5) * cell_size_km + x_origin) * 1000.0
-        y_m = ((cy + 0.5) * cell_size_km + y_origin) * 1000.0
-
-        lon, lat = inv.transform(x_m, y_m)
-        G.nodes[node]["lat"] = float(lat)
-        G.nodes[node]["lon"] = float(lon)
+    _assign_node_coords(G, df_grid, cell_size_km, target_crs)
 
     if info:
-        print(
-            f"Custom Abe-Suzuki (hard thresholds): "
-            f"{G.number_of_nodes()} nodes, "
-            f"{G.number_of_edges()} edges, "
-            f"{nx.number_of_selfloops(G)} self-loops, "
-            f"time {time.time() - t0:.2f}s"
+        log.info(
+            "Custom hard network (%d km, Δr≤%g km, Δt≤%g s): "
+            "%d nodes, %d edges, %d self-loops, %.1fs",
+            cell_size_km,
+            spatial_threshold_km,
+            time_threshold_sec,
+            G.number_of_nodes(),
+            G.number_of_edges(),
+            nx.number_of_selfloops(G),
+            time.time() - t0,
         )
-
     return G
-
-
-
-
-
-
-
-
-# ============================ HYBRID VERSION ================================================
-
 def build_abe_suzuki_network_custom_hybrid(
     df: pd.DataFrame,
     cell_size_km: float,
@@ -364,6 +341,12 @@ def build_abe_suzuki_network_custom_hybrid(
         # --- EDGE ---
         u = seq[i]
         v = seq[i + 1]
+
+        # Skip self-loops (consecutive events in same cell are burst artifacts,
+        # not inter-cell transitions; they otherwise dominate the strength
+        # distribution with astronomical accumulated weights).
+        if u == v:
+            continue
 
         # --- SOFT WEIGHTS (same as soft version) ---
 

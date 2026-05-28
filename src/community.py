@@ -8,8 +8,6 @@ passed to any downstream function interchangeably:
                          algorithm); strictly better than the NetworkX implementation
   Consensus Louvain    — 100-run co-occurrence → consensus matrix → Louvain;
                          removes partition instability inherent to single-run Louvain
-  Spectral             — k-way spectral clustering on the normalised Laplacian
-                         (Jordan-Weiss); k taken from Louvain community count
   InfoMap              — flow-based compression (directed, weighted); identifies
                          communities as regions where random walkers stay trapped
   HDBSCAN-Geographic   — density-based clustering on projected (x, y) node
@@ -443,7 +441,7 @@ def plot_dbscan_geo(
         lat="latitude",
         lon="longitude",
         color="cluster_id",
-        color_continuous_scale=px.colors.sequential.Turbo,  # 🔥 best high-contrast palette
+        color_continuous_scale=px.colors.sequential.Turbo,
         size="size",
         size_max=12,
         map_style="carto-positron",
