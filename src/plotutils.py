@@ -144,9 +144,9 @@ def save_plotly(fig, name: str) -> None:
     if not (_SAVE_JPG or _SAVE_PDF) or _FIGURES_DIR is None:
         return
     try:
-        import kaleido  # noqa: F401  — presence check only
+        import kaleido  # noqa: F401  – presence check only
     except ImportError:
-        log.warning("kaleido not installed — skipping static Plotly save for '%s'. "
+        log.warning("kaleido not installed – skipping static Plotly save for '%s'. "
                     "Run: pip install kaleido", name)
         return
     def _write(fmt: str, path: "Path", **kwargs: object) -> None:
@@ -155,7 +155,7 @@ def save_plotly(fig, name: str) -> None:
             log.info("Saved %s", path)
         except Exception as exc:
             # Tile-based scatter_map figures cannot be rasterised by Kaleido
-            # (Error 525: Map error — headless browser has no tile access).
+            # (Error 525: Map error – headless browser has no tile access).
             # Fall back to HTML which preserves full interactivity.
             html_path = _FIGURES_DIR / "html" / f"{name}.html"
             html_path.parent.mkdir(parents=True, exist_ok=True)

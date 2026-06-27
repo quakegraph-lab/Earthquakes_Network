@@ -260,7 +260,7 @@ def plot_ccdf_with_fit(
 
     For $P(k) \\propto k^{-\\gamma}$ the CCDF scales as $k^{-(\\gamma-1)}$.
     When ``gamma_mle`` is supplied the amplitude is fitted on the tail while
-    the slope is fixed — giving a clean MLE-anchored overlay.
+    the slope is fixed – giving a clean MLE-anchored overlay.
 
     Parameters
     ----------

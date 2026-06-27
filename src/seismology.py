@@ -197,7 +197,7 @@ def fit_omori(
             label=rf"Omori fit ($p={p_fit:.2f}$, $c={c_fit:.2f}$)")
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_title(f"Omori Law — {event_name}", fontsize=16)
+    ax.set_title(f"Omori Law – {event_name}", fontsize=16)
     ax.set_xlabel("Time since mainshock (days)", fontsize=14)
     ax.set_ylabel("Aftershock rate $n(t)$", fontsize=14)
     ax.legend(fontsize=12)

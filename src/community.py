@@ -4,13 +4,13 @@ Community detection suite for the Abe-Suzuki earthquake network.
 Five methods, all returning the same {node: community_id} dict so they can be
 passed to any downstream function interchangeably:
 
-  Louvain              — modularity optimisation via leidenalg/igraph (Leiden
+  Louvain              – modularity optimisation via leidenalg/igraph (Leiden
                          algorithm); strictly better than the NetworkX implementation
-  Consensus Louvain    — 100-run co-occurrence → consensus matrix → Louvain;
+  Consensus Louvain    – 100-run co-occurrence → consensus matrix → Louvain;
                          removes partition instability inherent to single-run Louvain
-  InfoMap              — flow-based compression (directed, weighted); identifies
+  InfoMap              – flow-based compression (directed, weighted); identifies
                          communities as regions where random walkers stay trapped
-  HDBSCAN-Geographic   — density-based clustering on projected (x, y) node
+  HDBSCAN-Geographic   – density-based clustering on projected (x, y) node
                          coordinates; communities = spatial density concentrations
                          independent of network topology
 
@@ -393,7 +393,7 @@ def run_dbscan_earthquakes(
 #         size="size",
 #         size_max=12,
 #         map_style="carto-positron",
-#         title=f"DBSCAN Clusters ({n_clusters} clusters) — {title}",
+#         title=f"DBSCAN Clusters ({n_clusters} clusters) – {title}",
 #         hover_data={"magnitude": True, "depth_km": True, "cluster": True},
 #     )
 
@@ -445,7 +445,7 @@ def plot_dbscan_geo(
         size="size",
         size_max=12,
         map_style="carto-positron",
-        title=f"DBSCAN Clusters ({n_clusters} clusters) — {title}",
+        title=f"DBSCAN Clusters ({n_clusters} clusters) – {title}",
         hover_data={"magnitude": True, "depth_km": True, "cluster": True},
     )
 
@@ -601,8 +601,8 @@ def plot_community_geo(
         hover_data={"lat": ":.3f", "lon": ":.3f", "degree": True, "size_val": False},
         map_style="carto-positron",
         title=(
-            f"Seismic Communities — {method_name} "
-            f"({n_shown} communities ≥ {min_community_size} nodes) — {title}"
+            f"Seismic Communities – {method_name} "
+            f"({n_shown} communities ≥ {min_community_size} nodes) – {title}"
         ),
     )
     fig.update_traces(marker=dict(opacity=0.7))

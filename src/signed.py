@@ -14,10 +14,10 @@ sign is stored; ties go to +1 (escalation wins).
 
 Analyses provided
 -----------------
-  plot_signed_degree        — in/out degree split by sign
-  compute_structural_balance — fraction of triangles satisfying Heider balance
-  analyze_chains             — length distribution of escalating / decaying runs
-  plot_signed_geo_map        — map of net sign per node (net imbalance)
+  plot_signed_degree        – in/out degree split by sign
+  compute_structural_balance – fraction of triangles satisfying Heider balance
+  analyze_chains             – length distribution of escalating / decaying runs
+  plot_signed_geo_map        – map of net sign per node (net imbalance)
 
 Seismological interpretations
 ------------------------------
@@ -56,11 +56,11 @@ def build_signed_network(df: pd.DataFrame, target_crs: str, cell_size_km: float 
     Each consecutive pair of events contributes an edge with sign determined
     by the magnitude change.  Edge attributes stored:
 
-    * ``weight``      — number of transitions between the two cells
-    * ``pos_count``   — transitions with magnitude increase
-    * ``neg_count``   — transitions with magnitude decrease
-    * ``sign``        — majority sign (+1 / -1); ties → +1
-    * ``net_sign``    — (pos_count - neg_count) / weight  ∈ [−1, +1]
+    * ``weight``      – number of transitions between the two cells
+    * ``pos_count``   – transitions with magnitude increase
+    * ``neg_count``   – transitions with magnitude decrease
+    * ``sign``        – majority sign (+1 / -1); ties → +1
+    * ``net_sign``    – (pos_count - neg_count) / weight  ∈ [−1, +1]
 
     Parameters
     ----------
@@ -186,7 +186,7 @@ def plot_signed_degree(G: nx.DiGraph, title: str = "", save: bool = True) -> Non
         ax.set_title(label, fontsize=10)
         ax.grid(True, which="both", ls="--", alpha=0.3)
 
-    fig.suptitle(f"Signed Degree Distributions — {title}", fontsize=13, y=1.02)
+    fig.suptitle(f"Signed Degree Distributions – {title}", fontsize=13, y=1.02)
     plt.tight_layout()
     if save:
         savefig(f"signed_degree_{_slug(title)}")
@@ -336,7 +336,7 @@ def plot_chains(df_chains: pd.DataFrame, title: str = "", save: bool = True) -> 
     )
     ax.set_xlabel("Run length (consecutive same-sign transitions)", fontsize=12)
     ax.set_ylabel("Count (log scale)", fontsize=12)
-    ax.set_title(f"Magnitude Run-Length Distribution — {title}", fontsize=13)
+    ax.set_title(f"Magnitude Run-Length Distribution – {title}", fontsize=13)
     ax.legend(fontsize=11)
     ax.grid(axis="y", ls="--", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
@@ -361,9 +361,9 @@ def plot_signed_geo_map(
     Interactive Plotly mapbox where each node is coloured by its net-sign
     imbalance: mean net_sign over all edges incident to the node.
 
-    Red nodes (net_sign > 0) are net escalating cells — they tend to trigger
+    Red nodes (net_sign > 0) are net escalating cells – they tend to trigger
     or receive events with higher magnitude than themselves.
-    Blue nodes (net_sign < 0) are net decaying cells — typical aftershock zones.
+    Blue nodes (net_sign < 0) are net decaying cells – typical aftershock zones.
 
     Parameters
     ----------
@@ -375,7 +375,7 @@ def plot_signed_geo_map(
         Initial map view.
     bounds : dict, optional
         Explicit viewport bounds ``{"west": ..., "east": ..., "south": ...,
-        "north": ...}`` — overrides zoom/center for static exports.
+        "north": ...}`` – overrides zoom/center for static exports.
     """
     rows = []
     for n in G.nodes():
@@ -407,7 +407,7 @@ def plot_signed_geo_map(
         hover_name="cell_id",
         hover_data={"net_sign": ":.3f", "degree": True},
         map_style="carto-darkmatter",
-        title=f"Signed Network — Net Escalation Index per Cell: {title}",
+        title=f"Signed Network – Net Escalation Index per Cell: {title}",
     )
     map_cfg: dict = {"center": {"lat": center_lat, "lon": center_lon}, "zoom": zoom}
     if bounds is not None:

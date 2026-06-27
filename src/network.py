@@ -155,7 +155,7 @@ def build_abe_suzuki_network(
 
     if info:
         log.info(
-            "Network (%d km, %s): %d nodes, %d edges, %d self-loops — %.1fs",
+            "Network (%d km, %s): %d nodes, %d edges, %d self-loops – %.1fs",
             cell_size_km,
             target_crs,
             G.number_of_nodes(),

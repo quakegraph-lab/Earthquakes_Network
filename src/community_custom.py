@@ -4,15 +4,15 @@ Community detection suite for the Abe-Suzuki earthquake network.
 Five methods, all returning the same {node: community_id} dict so they can be
 passed to any downstream function interchangeably:
 
-  Louvain              — modularity optimisation via leidenalg/igraph (Leiden
+  Louvain              – modularity optimisation via leidenalg/igraph (Leiden
                          algorithm); strictly better than the NetworkX implementation
-  Consensus Louvain    — 100-run co-occurrence → consensus matrix → Louvain;
+  Consensus Louvain    – 100-run co-occurrence → consensus matrix → Louvain;
                          removes partition instability inherent to single-run Louvain
-  Spectral             — k-way spectral clustering on the normalised Laplacian
+  Spectral             – k-way spectral clustering on the normalised Laplacian
                          (Jordan-Weiss); k taken from Louvain community count
-  InfoMap              — flow-based compression (directed, weighted); identifies
+  InfoMap              – flow-based compression (directed, weighted); identifies
                          communities as regions where random walkers stay trapped
-  HDBSCAN-Geographic   — density-based clustering on projected (x, y) node
+  HDBSCAN-Geographic   – density-based clustering on projected (x, y) node
                          coordinates; communities = spatial density concentrations
                          independent of network topology
 
@@ -27,12 +27,14 @@ DC-SBM log-likelihood, Surprise, geographic compactness, depth coherence).
 """
 
 import logging
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import seaborn as sns
 from sklearn.cluster import KMeans
 from sklearn.metrics import normalized_mutual_info_score
@@ -94,12 +96,12 @@ def _run_leiden(
     Leiden optimisation for hybrid weighted earthquake network.
 
     partition_type:
-        - "RB"  (default) — Reichardt-Bornholdt modularity; dimensionless
+        - "RB"  (default) – Reichardt-Bornholdt modularity; dimensionless
                 resolution γ, weight-scale-invariant. Matches the standard
                 "Louvain γ" parameter in the literature. Use this for any
                 graph with non-trivial edge-weight scale (e.g. the hybrid
                 network with weights spanning many decades).
-        - "CPM" — Constant Potts Model; γ is an *absolute* density threshold
+        - "CPM" – Constant Potts Model; γ is an *absolute* density threshold
                 in edge-weight units. Only sensible when edge weights are
                 normalised to ~O(1); on a wide-range weight distribution the
                 resolution becomes scale-dependent and γ ≈ 1 either over- or
@@ -144,7 +146,7 @@ def run_louvain_hybrid(
     Community detection on undirected hybrid network.
 
     Uses Reichardt-Bornholdt modularity by default (``partition_type="RB"``)
-    — dimensionless γ, weight-scale-invariant. Pass ``partition_type="CPM"``
+    – dimensionless γ, weight-scale-invariant. Pass ``partition_type="CPM"``
     only if you have a normalised-weight graph and know that γ is a meaningful
     absolute density threshold for your data.
     """
@@ -197,20 +199,20 @@ def run_louvain_consensus_hybrid(
         Number of Louvain runs to average over.
     resolution : float
         γ for each individual Louvain run. MUST match the γ used for any
-        plain Louvain you are comparing against — different γ give partitions
+        plain Louvain you are comparing against – different γ give partitions
         at different granularity scales (low NMI without method disagreement).
     threshold : float
         Lancichinetti-Fortunato cutoff. Keep co-occurrence edges with
         normalised weight ≥ threshold. 0.5 is standard.
     max_iter : int
-        Number of iterative consensus rounds. **Default 1** — the standard
+        Number of iterative consensus rounds. **Default 1** – the standard
         algorithm is a single round (run on G, build H, run on H). Iterating
         replaces G with H repeatedly, which (a) loses directedness because H
         is undirected by construction and (b) compounds shrinkage, ending
         with many micro-components. Set >1 only if you have a specific reason.
     sample_pairs : bool
         Subsample members of large communities before counting co-occurrence.
-        **Default False** — sampling drops genuine co-occurrences below the
+        **Default False** – sampling drops genuine co-occurrences below the
         threshold for any community larger than ``max_pairs_per_comm`` (each
         node has p = max_pairs_per_comm/|C| of being sampled, so a pair has
         p² of both being in the same run's sample; for |C|=1000 and
@@ -328,7 +330,7 @@ def run_infomap_hybrid(
     nodes = list(G.nodes())
     node_to_int = {n: i for i, n in enumerate(nodes)}
 
-    # Pass directed/silent/seed via the constructor — the attribute-set form
+    # Pass directed/silent/seed via the constructor – the attribute-set form
     # (``im.directed = True`` after init) is non-standard and silently no-ops
     # on current infomap versions, which would run undirected flow on a
     # directed graph (different community boundaries entirely).
@@ -368,7 +370,7 @@ def run_hdbscan_geo_hybrid(
     target_crs: str = "epsg:32632",
 ) -> dict:
     """
-    HDBSCAN on the geographic coordinates of the cells — a *spatial null
+    HDBSCAN on the geographic coordinates of the cells – a *spatial null
     baseline* for community detection. Ignores the network entirely and
     clusters cells purely by (projected) (x, y) position.
 
@@ -387,7 +389,7 @@ def run_hdbscan_geo_hybrid(
         HDBSCAN minimum cluster size. Matches the ``min_community_size=10``
         filter convention used elsewhere in the project.
     min_samples : int or None
-        HDBSCAN ``min_samples``. ``None`` defaults to ``min_cluster_size`` —
+        HDBSCAN ``min_samples``. ``None`` defaults to ``min_cluster_size`` –
         a relatively conservative setting that yields fewer noise points.
     target_crs : str, default ``"epsg:32632"``
         Metric CRS used to project lat/lon into kilometres before clustering.
@@ -520,8 +522,9 @@ def plot_community_geo_hybrid(
         },
         mapbox_style="carto-positron",
         title=(
-            f"Seismic Communities (Hybrid) — {method_name} "
-            f"({n_shown} communities ≥ {min_community_size}) — {title}"
+            f"Seismic Communities (Hybrid): {method_name}"
+            f"<br><sup>{n_shown} communities (size ≥ {min_community_size} cells)"
+            f", {title}</sup>"
         ),
     )
 
@@ -549,6 +552,359 @@ def plot_community_geo_hybrid(
     fig.show()
 
 
+# ====================================================================================
+# Communities vs DISS seismogenic sources (fault validation)
+# ====================================================================================
+
+def load_diss_faults(
+    diss_dir,
+    italy_only: bool = True,
+    with_iss: bool = True,
+):
+    """
+    Load DISS 3.3.1 seismogenic-source layers as GeoDataFrames in EPSG:4326.
+
+    Parameters
+    ----------
+    diss_dir : str or Path
+        Directory containing ``csspln331.geojson`` (Composite Seismogenic
+        Sources), ``iss331.geojson`` (Individual Seismogenic Sources) and,
+        optionally, ``limits_IT_regions.geojson`` (Italian regional boundaries
+        used as an offline basemap reference).
+    italy_only : bool
+        Keep only sources whose ``idsource`` code starts with ``IT``.
+    with_iss : bool
+        Also load the Individual Seismogenic Sources layer.
+
+    Returns
+    -------
+    dict
+        ``{"css": GeoDataFrame|None, "iss": GeoDataFrame|None,
+           "regions": GeoDataFrame|None}`` – all in EPSG:4326 (lon/lat),
+        directly compatible with the lon/lat community maps.
+    """
+    import geopandas as gpd  # heavy optional dependency – import lazily
+
+    diss_dir = Path(diss_dir)
+
+    def _load(name: str):
+        p = diss_dir / name
+        if not p.exists():
+            log.warning("DISS layer not found: %s", p)
+            return None
+        gdf = gpd.read_file(p)
+        if gdf.crs is None:
+            gdf = gdf.set_crs(4326)
+        return gdf.to_crs(4326)
+
+    css     = _load("csspln331.geojson")
+    iss     = _load("iss331.geojson") if with_iss else None
+    regions = _load("limits_IT_regions.geojson")
+
+    if italy_only:
+        for key, gdf in (("css", css), ("iss", iss)):
+            if gdf is not None and "idsource" in gdf.columns:
+                gdf = gdf[gdf["idsource"].astype(str).str.startswith("IT")]
+                if key == "css":
+                    css = gdf
+                else:
+                    iss = gdf
+
+    return {"css": css, "iss": iss, "regions": regions}
+
+
+def _community_points_df(
+    G: nx.Graph,
+    community_map: Partition,
+    min_community_size: int,
+) -> pd.DataFrame:
+    """Community nodes as a lon/lat point DataFrame (shared helper)."""
+    rows = []
+    for n in G.nodes():
+        if "lat" not in G.nodes[n]:
+            continue
+        rows.append({
+            "cell_id":   n,
+            "community": str(community_map.get(n, -1)),
+            "lat":       G.nodes[n]["lat"],
+            "lon":       G.nodes[n]["lon"],
+            "strength":  G.degree(n, weight="weight"),
+        })
+    df = pd.DataFrame(rows)
+    df = df[df["community"] != "-1"]
+    counts = df["community"].value_counts()
+    large = counts[counts >= min_community_size].index
+    return df[df["community"].isin(large)].copy()
+
+
+def _geom_to_lonlat_lines(gdf) -> tuple[list, list]:
+    """
+    Flatten a (Multi)Polygon / (Multi)LineString GeoDataFrame to ``lon``/``lat``
+    arrays with ``None`` separators between disjoint segments.
+
+    The ``None`` gaps let a single Plotly ``Scattermap`` line trace draw every
+    fault as one trace (so it renders *above* the community markers, which the
+    legacy ``mapbox.layers`` path could not). Polygon exteriors are traced as
+    closed rings.
+    """
+    lons: list = []
+    lats: list = []
+
+    def _ring(coords) -> None:
+        for x, y in coords:
+            lons.append(x)
+            lats.append(y)
+        lons.append(None)
+        lats.append(None)
+
+    for geom in gdf.geometry:
+        if geom is None or geom.is_empty:
+            continue
+        gt = geom.geom_type
+        if gt == "Polygon":
+            _ring(geom.exterior.coords)
+        elif gt == "MultiPolygon":
+            for part in geom.geoms:
+                _ring(part.exterior.coords)
+        elif gt == "LineString":
+            _ring(geom.coords)
+        elif gt == "MultiLineString":
+            for part in geom.geoms:
+                _ring(part.coords)
+    return lons, lats
+
+
+# Token-free Carto raster basemaps without place labels (cleaner for slides).
+# Selected by passing the key as ``basemap_style``; rendered as a raster layer
+# beneath the data traces (Plotly has no built-in "nolabels" mapbox style).
+_NOLABELS_TILES = {
+    "carto-positron-nolabels":
+        "https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
+    "carto-darkmatter-nolabels":
+        "https://basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png",
+}
+
+
+def plot_communities_faults_overlay_hybrid(
+    G: nx.Graph,
+    community_map: Partition,
+    diss_dir,
+    title: str = "",
+    method_name: str = "",
+    center_lat: float = 41.9,
+    center_lon: float = 12.5,
+    zoom: float = 0,
+    bounds: dict | None = None,
+    min_community_size: int = 10,
+    height: int = 700,
+    width: int = 770,
+    italy_only: bool = True,
+    with_iss: bool = False,
+    basemap_style: str = "carto-positron-nolabels",
+    fault_color: str = "#222222",
+    fault_casing_color: str = "rgba(255,255,255,0.9)",
+    marker_opacity: float = 0.75,
+    size_max: int = 11,
+    save: bool = True,
+) -> None:
+    """
+    Interactive overlay of detected communities and DISS faults on one map (A).
+
+    Community cells are coloured by community (marker size = weighted degree).
+    DISS seismogenic sources are drawn as **line traces on top of** the markers
+    (Plotly ``mapbox.layers`` always render *beneath* data traces, which buried
+    the faults under the dense, on-fault community markers). Each fault is drawn
+    twice – a wider light casing then a thin dark core – so it stays legible
+    over both the basemap and dark community markers. Because the community
+    palette (``Bold``) already spans the full hue wheel, the fault colour is kept
+    achromatic by default (near-black + white casing) so it never reads as
+    "another community".
+
+    Parameters
+    ----------
+    basemap_style : str
+        Basemap. The default ``"carto-positron-nolabels"`` (and
+        ``"carto-darkmatter-nolabels"``) are token-free Carto raster basemaps
+        without place labels, which keeps the slide clean; any built-in Plotly
+        mapbox style name (e.g. ``"carto-positron"``) is also accepted. The light
+        basemaps pair with the default dark-grey faults; for a dark basemap pass a
+        bright ``fault_color`` such as ``"#00e5ff"`` (cyan is the one vivid hue
+        absent from ``Bold``) with ``fault_casing_color="rgba(0,0,0,0.6)"``.
+    fault_color, fault_casing_color : str
+        Core and casing (halo) colours for the fault line traces.
+    marker_opacity : float
+        Community-marker opacity; lower lets the faults show through dense areas.
+    size_max : int
+        Maximum community-marker size (weighted-degree scaled).
+    with_iss : bool
+        Also overlay Individual Seismogenic Sources. Off by default – at this
+        zoom the ISS planes add clutter and the CSS outlines carry the structure.
+    """
+    faults = load_diss_faults(diss_dir, italy_only=italy_only, with_iss=with_iss)
+
+    df = _community_points_df(G, community_map, min_community_size)
+    if df.empty:
+        print("No communities large enough to display.")
+        return
+    n_shown = df["community"].nunique()
+    df["size_val"] = np.log1p(df["strength"]).clip(lower=0.5)
+
+    # Two-line title (main + smaller subtitle) so it never overflows the width.
+    title_text = (
+        f"Communities vs DISS faults: {method_name}"
+        f"<br><sup>{n_shown} communities (size ≥ {min_community_size} cells)"
+        f", {title}</sup>"
+    )
+
+    # No-labels basemaps are raster tiles drawn under the traces; Plotly's own
+    # mapbox style is set to "white-bg" in that case.
+    raster_url = _NOLABELS_TILES.get(basemap_style)
+    px_style = "white-bg" if raster_url else basemap_style
+
+    fig = px.scatter_mapbox(
+        df, lat="lat", lon="lon",
+        color="community", size="size_val", size_max=size_max,
+        color_discrete_sequence=_PALETTE,
+        hover_name="community",
+        hover_data={"lat": ":.3f", "lon": ":.3f",
+                    "strength": ":.3e", "size_val": False},
+        mapbox_style=px_style,
+        title=title_text,
+    )
+    fig.update_traces(marker=dict(opacity=marker_opacity))
+
+    # Fault sources as line traces ON TOP of the markers (casing + dark core).
+    # Each source layer gets one casing trace and one core trace so disjoint
+    # segments share a single legend entry.
+    for key, core_w, case_w in (("css", 1.2, 3.0), ("iss", 0.9, 2.4)):
+        layer = faults.get(key)
+        if layer is None or layer.empty:
+            continue
+        lons, lats = _geom_to_lonlat_lines(layer)
+        if not lons:
+            continue
+        fig.add_trace(go.Scattermapbox(
+            lon=lons, lat=lats, mode="lines",
+            line=dict(color=fault_casing_color, width=case_w),
+            hoverinfo="skip", showlegend=False))
+        fig.add_trace(go.Scattermapbox(
+            lon=lons, lat=lats, mode="lines",
+            line=dict(color=fault_color, width=core_w),
+            name="DISS faults" if key == "css" else "DISS ISS",
+            hoverinfo="skip",
+            showlegend=(key == "css")))
+
+    map_cfg = {"center": {"lat": center_lat, "lon": center_lon}, "zoom": zoom}
+    if bounds is not None:
+        map_cfg["bounds"] = bounds
+    if raster_url:
+        map_cfg["layers"] = [{
+            "below": "traces", "sourcetype": "raster",
+            "source": [raster_url],
+            "sourceattribution": "© CARTO © OpenStreetMap contributors",
+        }]
+
+    fig.update_layout(mapbox=map_cfg,
+                      margin={"r": 0, "t": 55, "l": 0, "b": 0},
+                      title=dict(font=dict(size=14), x=0.02, xanchor="left"),
+                      width=width, height=height, showlegend=True)
+
+    if save:
+        save_plotly(fig, f"communities_vs_faults_overlay_{_slug(method_name)}_{_slug(title)}")
+    fig.show()
+
+
+def plot_communities_faults_sidebyside_hybrid(
+    G: nx.Graph,
+    community_map: Partition,
+    diss_dir,
+    title: str = "",
+    method_name: str = "",
+    bounds: dict | None = None,
+    min_community_size: int = 10,
+    italy_only: bool = True,
+    with_iss: bool = False,
+    fault_color: str = "#1a1a1a",
+    fault_casing_color: str = "white",
+    figsize: tuple[float, float] = (15, 9),
+    save: bool = True,
+) -> None:
+    """
+    Static side-by-side figure: DISS faults (left) vs communities (right) (B).
+
+    Left panel shows the DISS Composite Seismogenic Source outlines; right panel
+    shows the community cells coloured by community with the same fault outlines
+    drawn **on top** for direct comparison. Faults use an achromatic core with a
+    white casing (halo) so they never collide with a community colour and stay
+    legible over the markers. Italian regional boundaries (if present) provide an
+    offline geographic reference. All layers are in lon/lat (EPSG:4326).
+
+    Parameters
+    ----------
+    fault_color, fault_casing_color : str
+        Core and casing (halo) colours for the fault outlines.
+    with_iss : bool
+        Also draw Individual Seismogenic Sources. Off by default (clutter).
+    """
+    import matplotlib.patheffects as pe
+
+    faults = load_diss_faults(diss_dir, italy_only=italy_only, with_iss=with_iss)
+
+    df = _community_points_df(G, community_map, min_community_size)
+    if df.empty:
+        print("No communities large enough to display.")
+        return
+
+    comms = sorted(df["community"].unique())
+    cmap = plt.get_cmap("tab20")
+    color_for = {c: cmap(i % 20) for i, c in enumerate(comms)}
+    point_colors = df["community"].map(color_for)
+
+    css, iss, regions = faults.get("css"), faults.get("iss"), faults.get("regions")
+
+    # white casing under a thin achromatic core → legible on any background
+    casing = [pe.Stroke(linewidth=3.0, foreground=fault_casing_color), pe.Normal()]
+
+    fig, (axL, axR) = plt.subplots(1, 2, figsize=figsize, sharex=True, sharey=True)
+
+    for ax in (axL, axR):
+        if regions is not None and not regions.empty:
+            regions.plot(ax=ax, facecolor="none", edgecolor="#cfd8dc",
+                         linewidth=0.5, zorder=0)
+
+    # Left – DISS fault outlines (achromatic core + casing)
+    if css is not None and not css.empty:
+        css.boundary.plot(ax=axL, color=fault_color, linewidth=1.0,
+                          path_effects=casing, zorder=2)
+    if iss is not None and not iss.empty:
+        iss.boundary.plot(ax=axL, color=fault_color, linewidth=0.6,
+                          alpha=0.7, zorder=3)
+    axL.set_title("DISS 3.3.1 seismogenic sources", fontsize=12)
+
+    # Right – communities with fault outlines ON TOP (casing keeps them readable)
+    axR.scatter(df["lon"], df["lat"], c=list(point_colors), s=18,
+                alpha=0.85, edgecolors="none", zorder=2)
+    if css is not None and not css.empty:
+        css.boundary.plot(ax=axR, color=fault_color, linewidth=0.9,
+                          path_effects=casing, zorder=3)
+    axR.set_title(f"Network communities: {method_name} "
+                  f"({len(comms)} with size ≥ {min_community_size})", fontsize=12)
+
+    if bounds is not None:
+        axL.set_xlim(bounds["west"], bounds["east"])
+        axL.set_ylim(bounds["south"], bounds["north"])
+    # geographic aspect ratio (Mercator-like) at central latitude
+    lat0 = np.radians((axL.get_ylim()[0] + axL.get_ylim()[1]) / 2)
+    for ax in (axL, axR):
+        ax.set_aspect(1.0 / np.cos(lat0))
+        ax.set_axis_off()
+
+    fig.suptitle(f"Communities vs faults: {title}", fontsize=14, y=0.98)
+    fig.tight_layout()
+
+    if save:
+        savefig(f"communities_vs_faults_sidebyside_{_slug(method_name)}_{_slug(title)}")
+    plt.show()
 
 
 
@@ -621,6 +977,190 @@ def plot_nmi_heatmap(nmi_df: pd.DataFrame):
 
 
 # ====================================================================================
+# Partition quality: the four course measures (Modularity, Ncut, InfoMap, NMI)
+# ====================================================================================
+
+def score_partition_hybrid(
+    G: nx.DiGraph,
+    partition: Partition,
+    pagerank: dict | None = None,
+    weight: str = "weight",
+    alpha: float = 0.85,
+) -> dict:
+    """
+    Flow-based partition quality in the course's unified P_cc = C·P_nn·Cᵀ framework.
+
+    Three intrinsic quality measures are derived from the random-walk flow induced
+    by the directed weighted network (Rosvall & Bergstrom 2008; course notes). With
+    P_cc[a,b] the probability the walker is in community a and steps to community b,
+    p_a = Σ_b P_cc[a,b] the stationary probability of community a (p = C·r, r the
+    PageRank visit probabilities), q_a = p_a − P_aa the exit probability of a, and
+    z_a = {r_i : i ∈ a} the node visit probabilities inside a:
+
+      * Modularity     Q    = Σ_a (P_aa − p_a²)              (maximize)
+      * Normalized cut Ncut = 1 − (1/K) Σ_a P_aa / p_a       (minimize)
+      * Map equation   L    = f(q) + Σ_a f([q_a, z_a]),  bits (minimize)
+                       with f(x) = −Σ_j x_j log₂(x_j / Σ_k x_k)
+
+    The fourth course quality measure, NMI, is pairwise between partitions and is
+    reported separately via :func:`compute_nmi_matrix`.
+
+    Parameters
+    ----------
+    G : nx.DiGraph
+        Directed weighted network the partition was computed on.
+    partition : dict
+        ``{node: community_id}``. Nodes absent from the partition are ignored.
+    pagerank : dict, optional
+        Precomputed PageRank ``{node: r}``; computed once on ``G`` if omitted
+        (pass it in when scoring several partitions on the same graph).
+    weight : str
+        Edge-weight attribute used for transitions and PageRank.
+    alpha : float
+        PageRank damping factor.
+
+    Returns
+    -------
+    dict
+        ``{"modularity", "ncut", "codelength", "n_communities"}``.
+    """
+    from collections import defaultdict
+
+    nodes = [n for n in G.nodes() if n in partition]
+    if not nodes:
+        return {"modularity": np.nan, "ncut": np.nan,
+                "codelength": np.nan, "n_communities": 0}
+
+    if pagerank is None:
+        pagerank = nx.pagerank(G, alpha=alpha, weight=weight)
+
+    # node visit probabilities r, restricted to scored nodes and renormalised
+    r = {n: float(pagerank.get(n, 0.0)) for n in nodes}
+    rs = sum(r.values())
+    if rs <= 0:
+        return {"modularity": np.nan, "ncut": np.nan,
+                "codelength": np.nan, "n_communities": 0}
+    r = {n: v / rs for n, v in r.items()}
+
+    comms = sorted({partition[n] for n in nodes})
+    idx = {c: i for i, c in enumerate(comms)}
+    K = len(comms)
+    node_set = set(nodes)
+
+    # community stationary probability p_a = Σ_{i in a} r_i
+    p = np.zeros(K)
+    for n in nodes:
+        p[idx[partition[n]]] += r[n]
+
+    # out-strength per scored node (within the scored subgraph)
+    s_out = {n: 0.0 for n in nodes}
+    for i, j, w in G.edges(data=weight, default=1.0):
+        if i in node_set and j in node_set:
+            s_out[i] += float(w)
+
+    # within-community flow P_aa = Σ_{i,j in a} r_i · w_ij / s_out_i
+    P_within = np.zeros(K)
+    for i, j, w in G.edges(data=weight, default=1.0):
+        if i not in node_set or j not in node_set:
+            continue
+        so = s_out[i]
+        if so <= 0:
+            continue
+        if partition[i] == partition[j]:
+            P_within[idx[partition[i]]] += r[i] * float(w) / so
+    # dangling nodes (no out-flow): visit mass stays in their own community
+    for n in nodes:
+        if s_out[n] <= 0:
+            P_within[idx[partition[n]]] += r[n]
+
+    # Modularity Q = Σ (P_aa − p_a²)
+    Q = float(np.sum(P_within - p ** 2))
+
+    # Normalized cut Ncut = 1 − (1/K) Σ P_aa / p_a
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = np.where(p > 0, P_within / p, 0.0)
+    ncut = float(1.0 - ratio.sum() / K) if K > 0 else np.nan
+
+    # exit probabilities q_a = p_a − P_aa
+    q = np.clip(p - P_within, 0.0, None)
+
+    # map equation L = f(q) + Σ_a f([q_a, z_a]) in bits
+    def _f(values) -> float:
+        x = np.array([v for v in values if v > 0], dtype=float)
+        s = x.sum()
+        if s <= 0:
+            return 0.0
+        return float(-np.sum(x * np.log2(x / s)))
+
+    nodes_by_comm: dict[int, list] = defaultdict(list)
+    for n in nodes:
+        nodes_by_comm[idx[partition[n]]].append(r[n])
+
+    L = _f(q)
+    for a in range(K):
+        L += _f([q[a]] + nodes_by_comm[a])
+
+    return {"modularity": Q, "ncut": ncut,
+            "codelength": L, "n_communities": K}
+
+
+def compare_partition_quality_hybrid(
+    G: nx.DiGraph,
+    partitions: dict,
+    weight: str = "weight",
+    alpha: float = 0.85,
+) -> pd.DataFrame:
+    """
+    Score every partition with the three intrinsic course measures (Modularity,
+    Ncut, map-equation codelength) plus its community count. PageRank is computed
+    once on ``G`` and shared. NMI (the fourth measure) is pairwise: see
+    :func:`compute_nmi_matrix`.
+
+    Returns
+    -------
+    pd.DataFrame
+        Rows = methods, columns = ``n_communities``, ``modularity``, ``ncut``,
+        ``codelength``.
+    """
+    pr = nx.pagerank(G, alpha=alpha, weight=weight)
+    rows = {}
+    for name, part in partitions.items():
+        rows[name] = score_partition_hybrid(
+            G, part, pagerank=pr, weight=weight, alpha=alpha)
+    df = pd.DataFrame(rows).T
+    return df[["n_communities", "modularity", "ncut", "codelength"]]
+
+
+def plot_partition_quality_hybrid(
+    quality_df: pd.DataFrame,
+    title: str = "",
+    save: bool = True,
+) -> None:
+    """
+    Bar panels of the three intrinsic quality measures across methods, with the
+    optimisation direction marked in each subtitle.
+    """
+    measures = [
+        ("modularity", "Modularity Q (higher better)"),
+        ("ncut",       "Normalized cut (lower better)"),
+        ("codelength", "Map equation L, bits (lower better)"),
+    ]
+    x = np.arange(len(quality_df))
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
+    for ax, (col, lab) in zip(axes, measures):
+        ax.bar(x, quality_df[col].to_numpy(), color="#5c6bc0")
+        ax.set_xticks(x)
+        ax.set_xticklabels(quality_df.index, rotation=30, ha="right", fontsize=8)
+        ax.set_title(lab, fontsize=11)
+        ax.grid(axis="y", alpha=0.3)
+    fig.suptitle(f"Community-detection quality: {title}", fontsize=13)
+    fig.tight_layout()
+    if save:
+        savefig(f"partition_quality_4measures_{_slug(title)}")
+    plt.show()
+
+
+# ====================================================================================
 # Mixed-Membership SBM via variational EM (Airoldi et al. 2008)
 # ====================================================================================
 
@@ -652,7 +1192,7 @@ def run_mmsbm_custom_hybrid(
 
     Variational EM follows the original paper (eqs. 3, 5, 7) with full
     materialisation of the per-pair multinomials :math:`\\phi_{p \\to q}`
-    and :math:`\\phi_{p \\leftarrow q}` as :math:`(N, N, K)` tensors —
+    and :math:`\\phi_{p \\leftarrow q}` as :math:`(N, N, K)` tensors –
     memory cost :math:`\\sim N^2 K` floats. For the hybrid 30 km Italy
     giant (:math:`N \\approx 1{,}800`) at :math:`K=10` this is :math:`\\sim`
     260 MB, runnable in a notebook. For larger networks, consider the
@@ -672,16 +1212,16 @@ def run_mmsbm_custom_hybrid(
         Dirichlet concentration hyperparameter. Default ``1/K`` encourages
         sparse memberships (most mass on one or two blocks).
     weight_mode : {'binary', 'poisson'}, default ``'poisson'``
-        * ``'binary'`` — Bernoulli edge likelihood on the 0/1 adjacency.
+        * ``'binary'`` – Bernoulli edge likelihood on the 0/1 adjacency.
           Loses the hybrid's continuous weight information but is the
           canonical Airoldi 2008 formulation.
-        * ``'poisson'`` — Poisson likelihood on ``log1p(weight)``. Preserves
+        * ``'poisson'`` – Poisson likelihood on ``log1p(weight)``. Preserves
           relative weight ordering across the hybrid's ~6-decade range
           (min ≈ 0.02, max ≈ 4.8e4) by compressing to ~0–11, which keeps
           Poisson rates numerically stable. This matches the prof's algorithm
           slide (MM-SBM: weighted=YES) for the hybrid network.
     tol : float
-        Convergence threshold (currently advisory only — fixed
+        Convergence threshold (currently advisory only – fixed
         ``n_iter`` is used).
     seed : int
         RNG seed for initialisation.
@@ -694,7 +1234,7 @@ def run_mmsbm_custom_hybrid(
         Expected membership probabilities under the variational posterior:
         :math:`\\hat\\pi_{p, k} = \\gamma_{p, k} / \\sum_k \\gamma_{p, k}`.
     hard_partition : dict
-        ``{node_id: int}`` mapping (argmax of :math:`\\hat\\pi`) — suitable
+        ``{node_id: int}`` mapping (argmax of :math:`\\hat\\pi`) – suitable
         for NMI comparison against single-membership methods.
 
     References
@@ -785,9 +1325,9 @@ def run_mmsbm_custom_hybrid(
     gamma[np.arange(N), init_labels] += 10.0
     gamma += rng.random((N, K)).astype(np.float32) * 0.1
 
-    # φ[i, j, k] = ξ_{i→j, k} = per-pair multinomial — i's block when interacting
+    # φ[i, j, k] = ξ_{i→j, k} = per-pair multinomial – i's block when interacting
     # with j (the *sender* indicator for endpoint i). The receiver indicator for
-    # the same pair is φ[j, i, k] = ξ_{j→i, k} — same tensor, transposed. There
+    # the same pair is φ[j, i, k] = ξ_{j→i, k} – same tensor, transposed. There
     # is no separate "receive" tensor in Airoldi's formulation.
     # Initialise φ from the hard labels too (peaked at init_labels[i]).
     phi = np.full((N, N, K), 0.01, dtype=np.float32)
@@ -796,7 +1336,7 @@ def run_mmsbm_custom_hybrid(
         phi[mask, :, k] = 0.9
     phi /= phi.sum(axis=2, keepdims=True)
 
-    # Block interaction matrix — diagonal-dominant init so that block-pair
+    # Block interaction matrix – diagonal-dominant init so that block-pair
     # likelihoods differ from the start (constant-B init traps the EM in a
     # symmetric degenerate fixed point where all blocks are interchangeable).
     mean_density = float(A.mean()) if weight_mode == "binary" else max(float(A.mean()), 1e-3)
@@ -836,11 +1376,11 @@ def run_mmsbm_custom_hybrid(
         phi /= phi.sum(axis=2, keepdims=True)
 
         # ── M-step ───────────────────────────────────────────────────────────
-        # γ_{p,k} = α + Σ_q φ[p, q, k]   — Airoldi eq. 7
+        # γ_{p,k} = α + Σ_q φ[p, q, k]   – Airoldi eq. 7
         gamma = (alpha + phi.sum(axis=1)).astype(np.float32)
 
         # B[r, s] = Σ_{ij} A[i,j] · φ[i,j,r] · φ[j,i,s] / Σ_{ij} φ[i,j,r] · φ[j,i,s]
-        # — Airoldi eq. 6 (Bernoulli) / analogous for Poisson rate
+        # – Airoldi eq. 6 (Bernoulli) / analogous for Poisson rate
         phi_T = phi.transpose(1, 0, 2)  # phi_T[i, j, s] = phi[j, i, s] = ξ_{j→i, s}
         numer = np.einsum('ijr,ijs->rs', phi * A[..., None], phi_T)
         denom = np.einsum('ijr,ijs->rs', phi, phi_T)

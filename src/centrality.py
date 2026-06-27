@@ -11,26 +11,26 @@ Two diagnostic visualisations:
 
 Default measures and seismological interpretations
 --------------------------------------------------
-Degree       — total activity (in + out), most seismically active cells.
-PageRank     — "stress sinks": cells that persistently receive seismic flow.
-Closeness    — cells that can spread seismic influence fastest across the network.
-Betweenness  — "bridges": cells on shortest paths between fault clusters.
-Clustering   — local clustering coefficient: fraction of a cell's neighbours
+Degree       – total activity (in + out), most seismically active cells.
+PageRank     – "stress sinks": cells that persistently receive seismic flow.
+Closeness    – cells that can spread seismic influence fastest across the network.
+Betweenness  – "bridges": cells on shortest paths between fault clusters.
+Clustering   – local clustering coefficient: fraction of a cell's neighbours
                that are also mutually connected; high at fault junctions.
 
 Additional available measures (pass via ``measures=``)
 ------------------------------------------------------
-In_Degree    — susceptibility: how often a cell is triggered by others.
-Out_Degree   — productivity: how many distinct cells a cell triggers.
-Harmonic     — topological reach via sum of inverse distances; handles
+In_Degree    – susceptibility: how often a cell is triggered by others.
+Out_Degree   – productivity: how many distinct cells a cell triggers.
+Harmonic     – topological reach via sum of inverse distances; handles
                disconnected nodes gracefully (closeness is 0 for unreachable nodes).
-Eigenvector  — cells embedded in the high-activity core (rich-club).
-Katz         — like eigenvector but counts ALL paths (with exponential decay),
+Eigenvector  – cells embedded in the high-activity core (rich-club).
+Katz         – like eigenvector but counts ALL paths (with exponential decay),
                more robust for directed/sparse graphs.
-HITS Hub     — cells that trigger important seismic zones (high out-connections
+HITS Hub     – cells that trigger important seismic zones (high out-connections
                to high-authority cells).
-HITS Auth    — cells that are the primary destinations of seismic propagation.
-Triangles    — raw triangle count per node (undirected); zero in a perfect tree,
+HITS Auth    – cells that are the primary destinations of seismic propagation.
+Triangles    – raw triangle count per node (undirected); zero in a perfect tree,
                high at fault intersections and dense aftershock clusters.
 
 """
@@ -191,7 +191,7 @@ def compute_all_centralities(
                 G, alpha=alpha_katz, weight="weight",
                 normalized=True, max_iter=1000, tol=1e-6)
         except nx.PowerIterationFailedConvergence:
-            log.warning("  Katz did not converge — using numpy solver")
+            log.warning("  Katz did not converge – using numpy solver")
             katz_cent = nx.katz_centrality_numpy(G, alpha=alpha_katz, weight="weight")
         log.info("  %.1fs  alpha=%.2e", time.time() - t0, alpha_katz)
 
@@ -216,7 +216,7 @@ def compute_all_centralities(
         try:
             hits_hub, hits_auth = nx.hits(G_nsl, max_iter=1000, tol=1e-6)
         except nx.PowerIterationFailedConvergence:
-            log.warning("  HITS did not converge — setting scores to 0")
+            log.warning("  HITS did not converge – setting scores to 0")
             zeros     = {v: 0.0 for v in G.nodes()}
             hits_hub  = zeros.copy()
             hits_auth = zeros.copy()
@@ -437,7 +437,7 @@ def plot_geo_top_n_interactive(
             )
         )
 
-    # Build dropdown buttons — toggle one trace at a time.
+    # Build dropdown buttons – toggle one trace at a time.
     buttons = []
     for i, metric in enumerate(available):
         vis = [j == i for j in range(len(available))]
@@ -472,7 +472,7 @@ def plot_geo_top_n_interactive(
         ],
         margin=dict(r=0, t=50, l=0, b=0),
         width=width, height=height,
-        title=f"Top {top_n} Seismic Cells by Centrality Metric — {title}",
+        title=f"Top {top_n} Seismic Cells by Centrality Metric – {title}",
         legend_title="Metric",
     )
     if save:
@@ -541,7 +541,7 @@ def plot_geo_centrality_overlap(
         hover_data={"depth_km": True, "n_metrics": True, **hover_extra},
         map_style="carto-positron",
         title=(
-            f"Centrality Convergence: Nodes in Multiple Top-{top_n} Rankings — {title}"
+            f"Centrality Convergence: Nodes in Multiple Top-{top_n} Rankings – {title}"
         ),
     )
     map_cfg: dict = {"center": {"lat": center_lat, "lon": center_lon}, "zoom": zoom}

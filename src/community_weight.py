@@ -10,18 +10,18 @@ communities rather than the many small ones.
 
 Pipeline
 --------
-1. :func:`aggregate_community_stats` — map events → cells → communities and
+1. :func:`aggregate_community_stats` – map events → cells → communities and
    compute per-community size, event count, mean/max magnitude and total
    Gutenberg-Richter energy.
 2. One of three weighting schemes (each a separate function, all returning the
    stats frame with a new ``weight`` column):
 
-   * :func:`weight_gr_energy`   — total radiated energy, ``Σ 10^{1.5 M}``.
-   * :func:`weight_count_mag`   — ``n_events · mean(M)``.
-   * :func:`weight_size_exp`    — ``n_cells · 10^{α · mean(M)}``.
+   * :func:`weight_gr_energy`   – total radiated energy, ``Σ 10^{1.5 M}``.
+   * :func:`weight_count_mag`   – ``n_events · mean(M)``.
+   * :func:`weight_size_exp`    – ``n_cells · 10^{α · mean(M)}``.
 
-3. :func:`rank_top_k` — sort by the weight and keep the top-K communities.
-4. :func:`plot_weight_bars` / :func:`plot_weighted_community_geo` — visualise.
+3. :func:`rank_top_k` – sort by the weight and keep the top-K communities.
+4. :func:`plot_weight_bars` / :func:`plot_weighted_community_geo` – visualise.
 
 References
 ----------
@@ -202,7 +202,7 @@ def plot_weight_bars(
     ax.set_yticklabels([f"C{int(c)}" for c in df["community"]])
     ax.set_xlabel(weight_label)
     ax.set_ylabel("Community")
-    ax.set_title(f"Top {len(df)} communities by weight — {title}")
+    ax.set_title(f"Top {len(df)} communities by weight – {title}")
 
     for y, (_, r) in zip(ypos, df.iterrows()):
         ax.text(
@@ -253,7 +253,7 @@ def plot_weighted_community_geo(
     and avoids the misleading "community footprint as uniform tiles" rendering
     you get when all cells of a community share one size value. If
     ``cell_event_counts`` is ``None``, size falls back to the community's
-    aggregate weight (legacy behaviour — every cell of a community gets the
+    aggregate weight (legacy behaviour – every cell of a community gets the
     same marker size).
     """
     weight_of = dict(zip(ranked["community"], ranked["weight"]))
@@ -306,8 +306,8 @@ def plot_weighted_community_geo(
             "lon": ":.3f",
         },
         title=(
-            f"Top {len(ranked)} weighted communities — {method_name} "
-            f"(weighting: {weight_label}, size ∝ {size_label}) — {title}"
+            f"Top {len(ranked)} weighted communities – {method_name} "
+            f"(weighting: {weight_label}, size ∝ {size_label}) – {title}"
         ),
     )
     fig.update_traces(marker=dict(opacity=0.75))

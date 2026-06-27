@@ -5,17 +5,17 @@ A community partition is only useful if its communities mean something
 physical.  This module treats well-documented Italian sequences (L'Aquila 2009,
 Amatrice-Norcia 2016, …) as ground truth: each is isolated by a space-time box
 around its mainshock, and we then check whether the detected communities
-*recover* that sequence — i.e. whether the sequence's events land in a single
+*recover* that sequence – i.e. whether the sequence's events land in a single
 community rather than being scattered across many.
 
 Pipeline
 --------
-1. :func:`label_known_sequences` — tag each event with the sequence whose
+1. :func:`label_known_sequences` – tag each event with the sequence whose
    space-time box it falls in (``None`` otherwise).
-2. :func:`sequence_community_concentration` — per sequence, measure how
+2. :func:`sequence_community_concentration` – per sequence, measure how
    concentrated its events are in one community (purity, normalised entropy,
    and what fraction of the dominant community the sequence actually makes up).
-3. :func:`plot_sequence_community_geo` — map a sequence's events coloured by
+3. :func:`plot_sequence_community_geo` – map a sequence's events coloured by
    their detected community, to see at a glance whether it is one community.
 
 A sequence with **high purity** and a **high share of its dominant community**
@@ -176,7 +176,7 @@ def plot_sequence_community_geo(
         log.warning("No partitioned events for sequence '%s'", sequence_name)
         return
     g["community"] = g["community"].astype(int).astype(str)
-    # Stringify the timestamp — pandas Timestamps (tz-aware especially) are not
+    # Stringify the timestamp – pandas Timestamps (tz-aware especially) are not
     # JSON-serialisable, so Kaleido's PDF/JPG export pipeline fails on the
     # in-figure hover_data spec. ISO strings round-trip cleanly.
     g["time_str"] = g["time"].dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -190,7 +190,7 @@ def plot_sequence_community_geo(
         color_discrete_sequence=px.colors.qualitative.Bold,
         map_style="carto-positron",
         hover_data={"magnitude": True, "time_str": True},
-        title=f"{sequence_name} events by community — {method_name} — {title}",
+        title=f"{sequence_name} events by community – {method_name} – {title}",
     )
     fig.update_traces(marker=dict(size=7, opacity=0.75))
     fig.update_layout(

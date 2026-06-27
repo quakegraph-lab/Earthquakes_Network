@@ -78,7 +78,7 @@ def build_temporal_networks(
         mask = (years >= y_start) & (years <= y_end)
         df_win = df[mask].sort_values("time").reset_index(drop=True)
         if len(df_win) < min_events:
-            log.info("Window %d–%d: only %d events — skipped", y_start, y_end, len(df_win))
+            log.info("Window %d–%d: only %d events – skipped", y_start, y_end, len(df_win))
             continue
         label = f"{y_start}–{y_end}"
         log.info("Building network for %s  (%d events)...", label, len(df_win))
@@ -313,7 +313,7 @@ def plot_temporal_metrics(
 
     Panels: (a) γ, (b) clustering coefficient C, (c) average path length L,
     (d) mean degree ⟨k⟩.  Reference lines for Italy/US overall values are not
-    drawn automatically — add them in the notebook where values are known.
+    drawn automatically – add them in the notebook where values are known.
 
     Parameters
     ----------
@@ -344,7 +344,7 @@ def plot_temporal_metrics(
         ax.set_xticks(x)
         ax.set_xticklabels(xtick_labels, fontsize=8)
 
-    fig.suptitle(f"Temporal Network Topology — {title}", fontsize=14, y=1.01)
+    fig.suptitle(f"Temporal Network Topology – {title}", fontsize=14, y=1.01)
     plt.tight_layout()
     if save:
         savefig(f"temporal_metrics_{_slug(title)}")
@@ -401,7 +401,7 @@ def plot_temporal_stability(
         ax.grid(axis="y", ls="--", alpha=0.3)
         ax.spines[["top", "right"]].set_visible(False)
 
-    fig.suptitle(f"Network Stability Across Windows — {title}", fontsize=13, y=1.01)
+    fig.suptitle(f"Network Stability Across Windows – {title}", fontsize=13, y=1.01)
     plt.tight_layout()
     if save:
         savefig(f"temporal_stability_{_slug(title)}")
@@ -445,7 +445,7 @@ def plot_temporal_comparison(
 
     ax.set_ylabel(ylabel, fontsize=11)
     ax.set_xlabel("Time window", fontsize=11)
-    ax.set_title(f"{ylabel} Evolution — Italy vs US — {title}", fontsize=12)
+    ax.set_title(f"{ylabel} Evolution – Italy vs US – {title}", fontsize=12)
     ax.legend(fontsize=10)
     ax.grid(True, ls="--", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)

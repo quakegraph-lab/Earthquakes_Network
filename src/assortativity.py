@@ -5,13 +5,13 @@ Computes structural (degree-degree) and physical attribute (depth, magnitude)
 assortativity, then visualizes the mixing patterns via binned and scalar plots.
 Includes a suite of custom structural constraint diagnostics:
 
-* ``preprocess_to_binned_df``      — Reduces a directed network to a simple graph
+* ``preprocess_to_binned_df``      – Reduces a directed network to a simple graph
                                     and applies logarithmic binning to smooth noise.
-* ``fit_intrinsic_slope``          — Computes the true mixing exponent (μ) by fitting
+* ``fit_intrinsic_slope``          – Computes the true mixing exponent (μ) by fitting
                                     binned data strictly below the structural cutoff.
-* ``analyze_degree_correlations``  — Complete degree-mixing pipeline mapping raw data,
+* ``analyze_degree_correlations``  – Complete degree-mixing pipeline mapping raw data,
                                     log-binned points, and the intrinsic fit line.
-* ``run_binned_randomization_test``— Generates an edge-swapped null model baseline to
+* ``run_binned_randomization_test``– Generates an edge-swapped null model baseline to
                                     isolate genuine physics from finite-size constraints.
 
 Seismological interpretation

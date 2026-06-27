@@ -4,9 +4,9 @@ Network robustness analysis for the Abe-Suzuki earthquake network.
 Simulates two failure scenarios on the undirected giant component and
 tracks how the giant connected component (GCC) shrinks:
 
-* **Random failure** — nodes removed uniformly at random (models
+* **Random failure** – nodes removed uniformly at random (models
   random equipment failure or catalog incompleteness).
-* **Targeted attack** — nodes removed in decreasing order of initial
+* **Targeted attack** – nodes removed in decreasing order of initial
   degree (models deliberate removal of the most active seismic cells).
 
 Theory prediction for scale-free networks (Le14):
@@ -37,10 +37,10 @@ from src.plotutils import savefig, save_plotly, _slug
 log = logging.getLogger(__name__)
 
 _STYLE = {
-    "Random (Real)":    dict(color="#e63946", ls="-",  lw=2.2, label="Random failure — Earthquake net"),
-    "Targeted (Real)":  dict(color="#c1121f", ls="--", lw=2.2, label="Targeted attack — Earthquake net"),
-    "Random (ER)":      dict(color="#457b9d", ls="-",  lw=1.5, label="Random failure — ER baseline", alpha=0.7),
-    "Targeted (ER)":    dict(color="#1d3557", ls="--", lw=1.5, label="Targeted attack — ER baseline", alpha=0.7),
+    "Random (Real)":    dict(color="#e63946", ls="-",  lw=2.2, label="Random failure – Earthquake net"),
+    "Targeted (Real)":  dict(color="#c1121f", ls="--", lw=2.2, label="Targeted attack – Earthquake net"),
+    "Random (ER)":      dict(color="#457b9d", ls="-",  lw=1.5, label="Random failure – ER baseline", alpha=0.7),
+    "Targeted (ER)":    dict(color="#1d3557", ls="--", lw=1.5, label="Targeted attack – ER baseline", alpha=0.7),
 }
 
 
@@ -59,8 +59,8 @@ def simulate_robustness(
         Undirected graph without self-loops (typically the giant component
         of the earthquake network).
     strategy : {"targeted", "random"}
-        * ``"targeted"`` — static highest-degree-first (initial degree order).
-        * ``"random"``   — uniformly random order.
+        * ``"targeted"`` – static highest-degree-first (initial degree order).
+        * ``"random"``   – uniformly random order.
     n_checkpoints : int
         Number of evenly-spaced points at which to record GCC size.
         Actual x-values will be ``np.linspace(0, 1, n_checkpoints + 1)``.

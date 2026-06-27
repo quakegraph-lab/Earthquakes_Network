@@ -10,7 +10,7 @@ d_ij = great-circle distance between cell centroids (km).  Parameters
 (α, β, η, C) are estimated by log-linear OLS on the observed edge set.
 
 The *structural excess* w_ij / λ_ij flags transitions stronger than
-geography and local activity can explain — candidate long-range
+geography and local activity can explain – candidate long-range
 stress-transfer corridors.
 
 References
@@ -183,7 +183,7 @@ def plot_gravity_fit(
     lim_max = max(df_edges["lambda_"].max(), df_edges["w"].max())
     ax.plot([lim_min, lim_max], [lim_min, lim_max], "k-", lw=2.5, zorder=5)
     ax.set_xscale("log"); ax.set_yscale("log")
-    # Clip axes to actual scatter data range — don't let the y=x line stretch x beyond lambda_max
+    # Clip axes to actual scatter data range – don't let the y=x line stretch x beyond lambda_max
     x_lo = df_edges["lambda_"].min() * 0.8
     x_hi = df_edges["lambda_"].max() * 1.25
     y_lo = df_edges["w"].min() * 0.8
@@ -202,7 +202,7 @@ def plot_gravity_fit(
     ax.set_xlabel("Gravity model prediction λ (transitions)", fontsize=11)
     ax.set_ylabel("Observed weight w (transitions)", fontsize=11)
     ax.set_title(
-        f"Spatial Null Model — Observed vs Predicted — {title}\n"
+        f"Spatial Null Model – Observed vs Predicted – {title}\n"
         f"α={params['alpha']}  β={params['beta']}  η={params['eta']}  R²={params['r2']}",
         fontsize=12,
     )
@@ -268,7 +268,7 @@ def plot_distance_decay(
     ax.plot(d_range, np.exp(log_fit), "r-", lw=2,
             label=f"Gravity fit  η = {params['eta']:.3f}")
 
-    # Binned mean + 90th-percentile — 20 log-spaced distance bins
+    # Binned mean + 90th-percentile – 20 log-spaced distance bins
     bin_edges = np.logspace(
         np.log10(df_edges["d_km"].min()),
         np.log10(df_edges["d_km"].max()),
@@ -292,7 +292,7 @@ def plot_distance_decay(
     ax.set_xscale("log"); ax.set_yscale("log")
     ax.set_xlabel("Cell-to-cell distance (km)", fontsize=11)
     ax.set_ylabel("Edge weight (transitions)", fontsize=11)
-    ax.set_title(f"Distance Decay of Seismic Transitions — {title}", fontsize=12)
+    ax.set_title(f"Distance Decay of Seismic Transitions – {title}", fontsize=12)
     ax.legend(fontsize=10)
     ax.grid(True, which="both", ls="--", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
@@ -319,7 +319,7 @@ def plot_excess_map(
     Interactive map of the top-``n_top`` excess edges (strongest relative to gravity).
 
     Each edge is drawn as a line coloured by log-excess magnitude.
-    These are the seismic transitions that the gravity model cannot explain —
+    These are the seismic transitions that the gravity model cannot explain –
     candidate long-range stress-transfer corridors or induced-seismicity links.
 
     Parameters
@@ -389,7 +389,7 @@ def plot_excess_map(
         map_cfg["bounds"] = bounds
 
     fig.update_layout(
-        title=(f"Spatial Null Model — Top {n_top} Excess Edges (beyond gravity): {title}\n"
+        title=(f"Spatial Null Model – Top {n_top} Excess Edges (beyond gravity): {title}\n"
                "Red lines = transitions stronger than proximity + activity predicts"),
         margin={"r": 0, "t": 60, "l": 0, "b": 0},
         width=width, height=height,

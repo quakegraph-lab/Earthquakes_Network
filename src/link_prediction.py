@@ -86,7 +86,7 @@ def split_edges_temporal(
     ]
 
     if not test_pos:
-        log.warning("No new edges found between past nodes — check year split.")
+        log.warning("No new edges found between past nodes – check year split.")
         return list(past_nodes), [], []
 
     # Negative: random non-edges (use a set for O(1) membership tests)
@@ -137,7 +137,7 @@ def _score_katz(
 ) -> np.ndarray:
     """
     Katz similarity: sum over paths of length 1..max_len weighted by beta^l.
-    Uses scipy sparse operations — O(nnz) per power, not O(N²).
+    Uses scipy sparse operations – O(nnz) per power, not O(N²).
     Beta is clamped to < 1/ρ(A) so the series converges.
     """
     nodes = list(G.nodes())
@@ -183,7 +183,7 @@ def _score_ppr(
 
     Builds the sparse row-stochastic transition matrix W once, then runs
     power iteration per unique source node.  Each source's N-dim PPR vector
-    is computed, used to update pair scores, then discarded — peak memory is
+    is computed, used to update pair scores, then discarded – peak memory is
     O(N) rather than O(N × |sources|).
     """
     nodes = list(G.nodes())
@@ -330,7 +330,7 @@ def plot_auc_comparison(
     ax.axvline(0.5, color="gray", ls="--", lw=1.2, label="Random baseline (0.5)")
     ax.set_xlim(0, 1.05)
     ax.set_xlabel("AUC-ROC", fontsize=12)
-    ax.set_title(f"Link Prediction AUC — {title}", fontsize=13)
+    ax.set_title(f"Link Prediction AUC – {title}", fontsize=13)
     ax.legend(fontsize=10)
     ax.spines[["top", "right"]].set_visible(False)
     plt.tight_layout()

@@ -4,15 +4,15 @@ Custom variants of the Abe-Suzuki earthquake network.
 Both builders modify the original construction in two ways requested by the
 project brief:
 
-1. **Link criterion** — a threshold on the spatial and/or temporal distance
+1. **Link criterion** – a threshold on the spatial and/or temporal distance
    between an earthquake and the next one (whether a link is created at all).
-2. **Edge weights** — magnitude is folded into the weight so that links
+2. **Edge weights** – magnitude is folded into the weight so that links
    between strong events stand out, instead of the weight being a pure
    transition count.
 
 Two strategies are provided:
 
-* :func:`build_abe_suzuki_network_custom` — *soft* model.  No edge is ever
+* :func:`build_abe_suzuki_network_custom` – *soft* model.  No edge is ever
   deleted; instead each transition is down-weighted by smooth exponential
   decays in time and space, and up-weighted by the Gutenberg-Richter energy
   proxy of the pair.  Avoids the arbitrary discontinuities of a hard cut and
@@ -20,7 +20,7 @@ Two strategies are provided:
 
       w_ij ∝ Σ 10^(α·(M_i+M_j)/2) · exp(-Δt/τ) · exp(-Δr/r₀)
 
-* :func:`build_abe_suzuki_network_custom_hard` — *hard* model.  A consecutive
+* :func:`build_abe_suzuki_network_custom_hard` – *hard* model.  A consecutive
   pair is linked only if Δt ≤ ``time_threshold_sec`` **and** great-circle
   Δr ≤ ``spatial_threshold_km``; surviving links keep the original
   transition-count weight.  Simple and interpretable, at the cost of

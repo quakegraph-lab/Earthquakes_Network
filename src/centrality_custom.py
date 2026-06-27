@@ -11,19 +11,34 @@ We focus on five robust, interpretable measures:
 CORE MEASURES (used in analysis)
 --------------------------------------------------
 
-Degree       — total interaction strength (weighted degree),
+Degree       – total interaction strength (weighted degree),
                proxy for overall seismic activity of a cell.
 
-PageRank     — stationary flow of seismic influence through the network,
-               identifying persistent "stress sinks".
+PageRank     – stationary flow of seismic influence through the network,
+               identifying persistent "stress sinks" (in-flow / authority side).
 
-Closeness    — how quickly a cell can reach all others via shortest paths,
-               proxy for global accessibility of seismic influence.
+CheiRank     – PageRank on the transposed network (A^T, i.e. G.reverse()),
+               identifying persistent "stress sources" (out-flow / hub side).
+               Same algorithm as PageRank; the PageRank–CheiRank pair forms a
+               2D ranking of a directed network (Zhirov et al. 2010).
 
-Betweenness  — how often a cell lies on shortest paths,
+Closeness    – how quickly a cell can be reached by all others via shortest
+               paths (in-closeness), proxy for global accessibility as a sink.
+
+Closeness_out – closeness on the transposed network, how quickly a cell
+               reaches all others (out-closeness / source side).
+
+Betweenness  – how often a cell lies on shortest paths,
                identifies structural bridges between fault systems.
 
-Clustering   — local density of weighted interactions,
+Note on weighting: Closeness and Betweenness are computed UNWEIGHTED (pure
+topology). Edge weight here is an interaction *strength* (high = strong link),
+not a distance, so feeding it to a shortest-path algorithm would invert its
+meaning (it would treat strong links as long detours). A correct weighted
+variant would require distance = 1/weight; we keep the unweighted topology
+instead. Degree, PageRank and CheiRank do use the weights.
+
+Clustering   – local density of weighted interactions,
                identifies coherent seismic neighborhoods / fault junctions.
 """
 
@@ -46,21 +61,26 @@ log = logging.getLogger(__name__)
 _METRICS = [
     "Degree",
     "PageRank",
+    "CheiRank",
     "Closeness",
+    "Closeness_out",
     "Betweenness",
     "Clustering",
 ]
 _LABELS = {
-    "Degree":      "Strength\n(total interaction)",
-    "PageRank":    "PageRank\n(stress sinks)",
-    "Closeness":   "Closeness\n(global accessibility)",
-    "Betweenness": "Betweenness\n(fault bridges)",
-    "Clustering":  "Clustering\n(local interaction density)",
+    "Degree":        "Strength\n(total interaction)",
+    "PageRank":      "PageRank\n(stress sinks)",
+    "CheiRank":      "CheiRank\n(stress sources)",
+    "Closeness":     "Closeness in\n(accessibility as sink)",
+    "Closeness_out": "Closeness out\n(accessibility as source)",
+    "Betweenness":   "Betweenness\n(fault bridges)",
+    "Clustering":    "Clustering\n(local interaction density)",
 }
 
 
 _DEFAULT_MEASURES = frozenset({
-    "Degree", "PageRank", "Closeness", "Betweenness", "Clustering",
+    "Degree", "PageRank", "CheiRank",
+    "Closeness", "Closeness_out", "Betweenness", "Clustering",
 })
 
 
@@ -74,7 +94,7 @@ def compute_all_centralities_hybrid(
     Centrality measures for hybrid weighted earthquake network.
     """
 
-    _DEFAULT = {"Degree", "PageRank", "Closeness", "Betweenness", "Clustering"}
+    _DEFAULT = set(_DEFAULT_MEASURES)
     _req = set(measures) if measures is not None else _DEFAULT
 
     t_total = time.time()
@@ -84,6 +104,12 @@ def compute_all_centralities_hybrid(
     G_und = G.to_undirected()
     G_und.remove_edges_from(nx.selfloop_edges(G_und))
 
+    # --- Transposed network (A^T) for out-flow / source-side measures ---
+    # G.reverse() flips every edge i->j into j->i; its adjacency is A^T.
+    # Built once and shared by CheiRank and out-closeness.
+    if _req & {"CheiRank", "Closeness_out"}:
+        G_rev = G.reverse(copy=False)
+
     # --- 1. Degree (weighted strength) ---
     if "Degree" in _req:
         log.info("Weighted degree (strength)...")
@@ -91,18 +117,32 @@ def compute_all_centralities_hybrid(
         deg_cent = dict(G.degree(weight="weight"))
         log.info("  %.1fs", time.time() - t0)
 
-    # --- 2. PageRank (weighted flow) ---
+    # --- 2. PageRank (weighted flow, in-flow / sink side) ---
     if "PageRank" in _req:
         log.info("PageRank...")
         t0 = time.time()
         pr_cent = nx.pagerank(G, weight="weight")
         log.info("  %.1fs", time.time() - t0)
 
-    # --- 3. Closeness (unweighted topology) ---
+    # --- 2b. CheiRank = PageRank on the transposed network (out-flow / source) ---
+    if "CheiRank" in _req:
+        log.info("CheiRank (PageRank on A^T)...")
+        t0 = time.time()
+        chei_cent = nx.pagerank(G_rev, weight="weight")
+        log.info("  %.1fs", time.time() - t0)
+
+    # --- 3. Closeness, unweighted topology (in-closeness / accessibility as sink) ---
     if "Closeness" in _req:
-        log.info("Closeness centrality...")
+        log.info("Closeness centrality (in)...")
         t0 = time.time()
         close_cent = nx.closeness_centrality(G)
+        log.info("  %.1fs", time.time() - t0)
+
+    # --- 3b. Out-closeness = closeness on the transposed network (source side) ---
+    if "Closeness_out" in _req:
+        log.info("Closeness centrality (out, on A^T)...")
+        t0 = time.time()
+        close_out_cent = nx.closeness_centrality(G_rev)
         log.info("  %.1fs", time.time() - t0)
 
     # --- 4. Betweenness ---
@@ -141,8 +181,14 @@ def compute_all_centralities_hybrid(
         if "PageRank" in _req:
             row["PageRank"] = pr_cent.get(node, 0.0)
 
+        if "CheiRank" in _req:
+            row["CheiRank"] = chei_cent.get(node, 0.0)
+
         if "Closeness" in _req:
             row["Closeness"] = close_cent.get(node, 0.0)
+
+        if "Closeness_out" in _req:
+            row["Closeness_out"] = close_out_cent.get(node, 0.0)
 
         if "Betweenness" in _req:
             row["Betweenness"] = bet_cent.get(node, 0.0)
@@ -234,6 +280,90 @@ def plot_centrality_correlation_hybrid(
 
 
 
+
+
+def plot_pagerank_cheirank_2d(
+    df: pd.DataFrame,
+    title: str = "",
+    top_n_labels: int = 6,
+    save: bool = True,
+) -> None:
+    """
+    2D PageRank–CheiRank ranking plot for a directed network.
+
+    Each cell is placed by its PageRank (in-flow / sink importance, x-axis)
+    and CheiRank (out-flow / source importance, y-axis), both on log scales.
+    The diagonal P = C marks flow balance; points are coloured by the
+    asymmetry log10(PageRank / CheiRank): red = net sink (receives more
+    influence than it emits), blue = net source. This is the standard 2D
+    directed-network ranking of Zhirov, Zhirov & Shepelyansky (2010).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must contain ``PageRank`` and ``CheiRank`` columns (and ``cell_id``
+        for labelling the most asymmetric cells).
+    title : str
+        Plot title suffix.
+    top_n_labels : int
+        Number of most sink-biased and most source-biased cells to annotate.
+    save : bool
+        Save the figure via ``savefig`` before showing.
+    """
+    if not {"PageRank", "CheiRank"} <= set(df.columns):
+        print("Need both PageRank and CheiRank columns for the 2D plot.")
+        return
+
+    d = df[(df["PageRank"] > 0) & (df["CheiRank"] > 0)].copy()
+    if d.empty:
+        print("No cells with positive PageRank and CheiRank.")
+        return
+
+    d["asymmetry"] = np.log10(d["PageRank"] / d["CheiRank"])
+    vmax = float(np.abs(d["asymmetry"]).quantile(0.98)) or 1.0
+
+    fig, ax = plt.subplots(figsize=(8, 7))
+    sc = ax.scatter(
+        d["PageRank"], d["CheiRank"],
+        c=d["asymmetry"], cmap="RdBu_r",
+        vmin=-vmax, vmax=vmax,
+        s=22, alpha=0.8, edgecolors="none",
+    )
+
+    # diagonal P = C (perfect sink/source balance)
+    lo = min(d["PageRank"].min(), d["CheiRank"].min())
+    hi = max(d["PageRank"].max(), d["CheiRank"].max())
+    ax.plot([lo, hi], [lo, hi], ls="--", color="grey", lw=1, zorder=0,
+            label="PageRank = CheiRank (balanced)")
+
+    # annotate most asymmetric cells on both sides
+    if "cell_id" in d.columns and top_n_labels > 0:
+        extremes = pd.concat([
+            d.nlargest(top_n_labels, "asymmetry"),   # net sinks
+            d.nsmallest(top_n_labels, "asymmetry"),  # net sources
+        ])
+        for _, r in extremes.iterrows():
+            ax.annotate(str(r["cell_id"]), (r["PageRank"], r["CheiRank"]),
+                        fontsize=7, alpha=0.7,
+                        xytext=(3, 3), textcoords="offset points")
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("PageRank  (in-flow / stress sink)")
+    ax.set_ylabel("CheiRank  (out-flow / stress source)")
+    ax.set_title(f"PageRank–CheiRank 2D ranking: {title}", fontsize=13, pad=12)
+    ax.legend(loc="lower right", fontsize=9)
+
+    cbar = fig.colorbar(sc, ax=ax, label=r"$\log_{10}(\mathrm{PageRank}/\mathrm{CheiRank})$")
+    cbar.ax.text(0.5, 1.02, "sink", transform=cbar.ax.transAxes,
+                 ha="center", va="bottom", fontsize=8)
+    cbar.ax.text(0.5, -0.02, "source", transform=cbar.ax.transAxes,
+                 ha="center", va="top", fontsize=8)
+
+    plt.tight_layout()
+    if save:
+        savefig(f"pagerank_cheirank_2d_hybrid_{_slug(title)}")
+    plt.show()
 
 
 def plot_geo_top_n_interactive_hybrid(
@@ -361,7 +491,7 @@ def plot_geo_top_n_interactive_hybrid(
         margin=dict(r=0, t=50, l=0, b=0),
         width=width,
         height=height,
-        title=f"Top {top_n} Seismic Cells (Hybrid Centrality) — {title}",
+        title=f"Top {top_n} Seismic Cells (Hybrid Centrality) – {title}",
         legend_title="Metric",
     )
 
@@ -452,7 +582,7 @@ def plot_geo_centrality_overlap_hybrid(
             **hover_extra,
         },
         mapbox_style="carto-positron",
-        title=f"Centrality Convergence (Hybrid): Top-{top_n} Overlap — {title}",
+        title=f"Centrality Convergence (Hybrid): Top-{top_n} Overlap – {title}",
     )
 
     map_cfg = {

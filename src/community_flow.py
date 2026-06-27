@@ -5,9 +5,9 @@ Models seismicity as a coarse-grained Markov chain: each Louvain community
 becomes a state, and edge weights provide transition probabilities.  Three
 quantities characterise each community state:
 
-  Self-retention T[i,i] — fraction of flow staying within the community.
-  Shannon entropy H_i    — diversity of outgoing flow (bits).
-  Stationary distribution π — long-run fraction of time spent in each state.
+  Self-retention T[i,i] – fraction of flow staying within the community.
+  Shannon entropy H_i    – diversity of outgoing flow (bits).
+  Stationary distribution π – long-run fraction of time spent in each state.
 
 References
 ----------
@@ -236,7 +236,7 @@ def plot_flow_heatmap(
     )
     ax.set_xlabel("Target community", fontsize=11)
     ax.set_ylabel("Source community", fontsize=11)
-    ax.set_title(f"Community Markov Flow — {title}", fontsize=13, pad=10)
+    ax.set_title(f"Community Markov Flow – {title}", fontsize=13, pad=10)
     plt.tight_layout()
     if save:
         savefig(f"community_flow_heatmap_{_slug(title)}")
@@ -277,7 +277,7 @@ def plot_flow_entropy(
                        rotation=45, ha="right", fontsize=8)
     ax.set_xlabel("Community", fontsize=11)
     ax.set_ylabel("Outflow entropy (bits)", fontsize=11)
-    ax.set_title(f"Community Outflow Entropy — {title}", fontsize=13)
+    ax.set_title(f"Community Outflow Entropy – {title}", fontsize=13)
     ax.legend(fontsize=9)
     ax.set_ylim(0, max_h * 1.2)
     ax.grid(axis="y", ls="--", alpha=0.3)
@@ -326,7 +326,7 @@ def plot_stationary_distribution(
                        rotation=45, ha="right", fontsize=8)
     ax.set_xlabel("Community", fontsize=11)
     ax.set_ylabel("Stationary probability π", fontsize=11)
-    ax.set_title(f"Stationary Distribution of Seismic Flow — {title}", fontsize=13)
+    ax.set_title(f"Stationary Distribution of Seismic Flow – {title}", fontsize=13)
     ax.legend(fontsize=9)
     ax.grid(axis="y", ls="--", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)

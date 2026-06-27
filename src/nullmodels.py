@@ -6,11 +6,11 @@ the macroscopic analysis in the network notebooks.
 
 Models
 ------
-ER     — Erdős–Rényi G(n, m): random wiring, Poisson degree distribution.
-BA     — Barabási–Albert preferential attachment: power-law degree distribution.
-WS     — Watts–Strogatz: regular lattice + rewiring; high C, short L (small-world).
-SBM    — Stochastic Block Model: edge probabilities fitted from Louvain partition.
-Config — Configuration model: preserves exact degree sequence (Molloy-Reed).
+ER     – Erdős–Rényi G(n, m): random wiring, Poisson degree distribution.
+BA     – Barabási–Albert preferential attachment: power-law degree distribution.
+WS     – Watts–Strogatz: regular lattice + rewiring; high C, short L (small-world).
+SBM    – Stochastic Block Model: edge probabilities fitted from Louvain partition.
+Config – Configuration model: preserves exact degree sequence (Molloy-Reed).
 
 References
 ----------
@@ -232,11 +232,11 @@ def build_null_graphs(
     -----
     Parameter matching strategy:
 
-    * **ER** — G(n, m): exact same node count N and edge count M as G.
-    * **BA** — m_attach = max(1, round(avg_degree / 2)); produces ~same M.
-    * **WS** — k = nearest even integer to avg_degree, p = 0.1 (standard
+    * **ER** – G(n, m): exact same node count N and edge count M as G.
+    * **BA** – m_attach = max(1, round(avg_degree / 2)); produces ~same M.
+    * **WS** – k = nearest even integer to avg_degree, p = 0.1 (standard
       small-world rewiring probability).
-    * **SBM** — block edge probabilities fitted from the Louvain partition
+    * **SBM** – block edge probabilities fitted from the Louvain partition
       via :func:`_build_sbm`.
     """
     n     = G.number_of_nodes()
