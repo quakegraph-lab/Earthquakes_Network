@@ -945,6 +945,7 @@ def plot_network_overview_hybrid(
     zoom: float = 0,
     bounds: dict | None = None,
     weight: str = "weight",
+    color_by: str = "strength",
     node_top_frac: float | None = 0.30,
     link_top_frac: float = 0.02,
     size_range: tuple = (5.0, 16.0),
@@ -966,10 +967,11 @@ def plot_network_overview_hybrid(
 ) -> None:
     """
     Network **skeleton** overview (post-construction, pre-community-detection):
-    only the **strongest cells** (top ``node_top_frac`` by weighted strength) are
-    drawn, coloured by log₁₀(strength) on a sequential ``plasma`` scale and sized
-    by strength, with only the **strongest links** (top ``link_top_frac``) among
-    them as the interaction backbone, on the ``carto-positron-nolabels`` basemap.
+    only the **top cells** (top ``node_top_frac`` by the chosen metric) are drawn,
+    coloured and sized by that metric (``color_by="strength"`` → log₁₀ strength,
+    the default; ``color_by="degree"`` → raw degree, linear) on a sequential
+    ``plasma`` scale, with only the **strongest links** (top ``link_top_frac``)
+    among them as the interaction backbone, on the ``carto-positron-nolabels`` basemap.
     Showing every one of the ~3 k cells turns the 20 km grid into a dense dot
     field and the links into texture; thresholding to the strong hubs + a sparse
     backbone makes the structure read as a network. The "establishing shot" of
@@ -983,8 +985,11 @@ def plot_network_overview_hybrid(
     G : nx.Graph
         Hybrid network with ``lon``/``lat`` node attributes and weighted edges.
     node_top_frac : float or None
-        Keep only this fraction of the strongest cells (``0.30`` = top 30 %).
+        Keep only this fraction of the top cells (``0.30`` = top 30 %).
         ``None`` keeps every cell (the dense-grid view).
+    color_by : str
+        Node metric for colour, size and thresholding: ``"strength"`` (weighted
+        degree, shown as log₁₀; default) or ``"degree"`` (raw count, linear).
     link_top_frac : float
         Fraction of the strongest edges *among the kept cells* drawn as the
         backbone.
@@ -1017,23 +1022,38 @@ def plot_network_overview_hybrid(
         print("No georeferenced nodes to display.")
         return
 
-    strength = np.array([float(G.degree(n, weight=weight)) for n in nodes], dtype=float)
-    # keep only the strongest cells (the hubs) so the map is a skeleton, not a grid
+    by_degree = color_by.lower() == "degree"
+    if by_degree:
+        vals = np.array([float(G.degree(n)) for n in nodes], dtype=float)          # unweighted count
+    else:
+        vals = np.array([float(G.degree(n, weight=weight)) for n in nodes], dtype=float)  # strength
+
+    # keep only the top cells (the hubs) so the map is a skeleton, not a grid
     if node_top_frac is not None and 0.0 < node_top_frac < 1.0:
-        thr = np.quantile(strength, 1.0 - node_top_frac)
-        keep = strength >= thr
+        thr = np.quantile(vals, 1.0 - node_top_frac)
+        keep = vals >= thr
         nodes = [n for n, k in zip(nodes, keep) if k]
-        strength = strength[keep]
+        vals = vals[keep]
     if not nodes:
-        print("No cells left after strength thresholding.")
+        print("No cells left after thresholding.")
         return
 
-    log_s = np.log10(np.clip(strength, 1e-12, None))
-    finite = log_s[np.isfinite(log_s)]
-    cmin, cmax = (np.percentile(finite, clip_pct) if finite.size else (None, None))
-    s1 = np.log1p(strength)
-    lo, hi = float(s1.min()), float(s1.max())
-    norm = (s1 - lo) / (hi - lo) if hi > lo else np.full_like(s1, 0.5)
+    if by_degree:
+        # degree: linear colour + linear sizing
+        color_vals = vals
+        cmin, cmax = (np.percentile(vals, clip_pct) if vals.size else (None, None))
+        cbar_title = "Degree"
+        s_base = vals
+    else:
+        # strength: log10 colour + log1p sizing (weights span several decades)
+        color_vals = np.log10(np.clip(vals, 1e-12, None))
+        finite = color_vals[np.isfinite(color_vals)]
+        cmin, cmax = (np.percentile(finite, clip_pct) if finite.size else (None, None))
+        cbar_title = "log<sub>10</sub>(strength)"
+        s_base = np.log1p(vals)
+
+    lo, hi = float(s_base.min()), float(s_base.max())
+    norm = (s_base - lo) / (hi - lo) if hi > lo else np.full_like(s_base, 0.5)
     sizes = size_range[0] + (size_range[1] - size_range[0]) * norm
 
     lon = np.array([G.nodes[n]["lon"] for n in nodes], dtype=float)
@@ -1051,13 +1071,15 @@ def plot_network_overview_hybrid(
                                  base_color=link_color, alpha_range=link_alpha):
         fig.add_trace(t)
 
-    # hub nodes coloured by log10(strength)
+    # hub nodes coloured by the chosen metric
+    hov = ([f"cell {n}<br>degree {int(v)}" for n, v in zip(nodes, vals)] if by_degree
+           else [f"cell {n}<br>strength {v:.3e}" for n, v in zip(nodes, vals)])
     fig.add_trace(go.Scattermapbox(
         lon=lon, lat=lat, mode="markers",
-        marker=dict(size=sizes, color=log_s, colorscale=colorscale,
+        marker=dict(size=sizes, color=color_vals, colorscale=colorscale,
                     cmin=cmin, cmax=cmax, opacity=0.9,
-                    colorbar=dict(title="log<sub>10</sub>(strength)")),
-        text=[f"cell {n}<br>strength {s:.3e}" for n, s in zip(nodes, strength)],
+                    colorbar=dict(title=cbar_title)),
+        text=hov,
         hoverinfo="text", showlegend=False,
     ))
 
@@ -1083,9 +1105,10 @@ def plot_network_overview_hybrid(
 
     pct = int(round(link_top_frac * 100))
     _what = "Network overview + DISS faults" if draw_faults else "Network overview"
+    colour_lbl = "degree" if by_degree else "log<sub>10</sub>(weighted strength)"
     title_text = pres_title(
         f"{_what}: {title}" if title else _what,
-        f"all {len(nodes):,} cells, colour = log<sub>10</sub>(weighted strength), "
+        f"all {len(nodes):,} cells, colour = {colour_lbl}, "
         f"top-{pct}% strongest links",
     )
 

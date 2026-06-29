@@ -59,8 +59,8 @@ _METRICS = [
 ]
 _LABELS = {
     "Degree":        "Degree",
-    "PageRank":      "PageRank\n(stress sinks)",
-    "Closeness":     "Closeness in",
+    "PageRank":      "PageRank",
+    "Closeness":     "Closeness",
     "Betweenness":   "Betweenness",
     "Clustering":    "Clustering",
 }
@@ -276,52 +276,35 @@ def plot_geo_top_n_interactive_hybrid(
     depth_min = float(df["depth_km"].min())
     depth_max = float(df["depth_km"].max())
 
-    traces = []
-
-    for i, metric in enumerate(available):
-
+    def _metric_trace(metric, visible, showscale):
         top = df.nlargest(top_n, metric).copy().reset_index(drop=True)
         top["rank"] = top.index + 1
-
-        # marker size: rank 1 = largest
-        size_max, size_min = 28, 8
+        size_max, size_min = 28, 8           # marker size: rank 1 = largest
         top["marker_size"] = (
-            size_max
-            - (top["rank"] - 1) * (size_max - size_min) / max(top_n - 1, 1)
+            size_max - (top["rank"] - 1) * (size_max - size_min) / max(top_n - 1, 1)
         )
-
+        lbl = _LABELS.get(metric, metric).replace("\n", " ")
         hover = (
             "<b>%{customdata[0]}</b><br>"
             "Rank: %{customdata[1]}<br>"
-            f"{_LABELS.get(metric, metric).replace('\n', ' ')}: %{{customdata[2]:.5f}}<br>"
+            f"{lbl}: %{{customdata[2]:.5f}}<br>"
             "Depth: %{customdata[3]:.0f} km<br>"
             "Lat: %{lat:.3f} | Lon: %{lon:.3f}<extra></extra>"
         )
-
-        custom = list(
-            zip(top["cell_id"], top["rank"], top[metric], top["depth_km"])
+        custom = list(zip(top["cell_id"], top["rank"], top[metric], top["depth_km"]))
+        return go.Scattermapbox(
+            lat=top["lat"], lon=top["lon"], mode="markers",
+            marker=dict(
+                size=top["marker_size"].tolist(),
+                color=top["depth_km"].tolist(),
+                colorscale="plasma", cmin=depth_min, cmax=depth_max,
+                showscale=showscale,
+                colorbar=dict(title="Depth (km)") if showscale else None,
+            ),
+            hovertemplate=hover, customdata=custom, visible=visible, name=lbl,
         )
 
-        traces.append(
-            go.Scattermapbox(
-                lat=top["lat"],
-                lon=top["lon"],
-                mode="markers",
-                marker=dict(
-                    size=top["marker_size"].tolist(),
-                    color=top["depth_km"].tolist(),
-                    colorscale="plasma",
-                    cmin=depth_min,
-                    cmax=depth_max,
-                    showscale=(i == 0),
-                    colorbar=dict(title="Depth (km)") if i == 0 else None,
-                ),
-                hovertemplate=hover,
-                customdata=custom,
-                visible=(i == 0),
-                name=_LABELS.get(metric, metric).replace("\n", " "),
-            )
-        )
+    traces = [_metric_trace(m, i == 0, i == 0) for i, m in enumerate(available)]
 
     # Dropdown menu
     buttons = []
@@ -371,8 +354,20 @@ def plot_geo_top_n_interactive_hybrid(
         legend_title="Metric",
     )
 
+    # Save one static map per metric (all combinations); the figure shown keeps the dropdown.
     if save:
-        save_plotly(fig, f"centrality_geo_top_n_hybrid_{_slug(title)}")
+        for metric in available:
+            lbl = _LABELS.get(metric, metric).replace("\n", " ")
+            sub = go.Figure(_metric_trace(metric, True, True))
+            sub.update_layout(
+                mapbox=map_cfg, margin=dict(r=0, t=50, l=0, b=0),
+                width=width, height=height,
+                title=pres_title(
+                    f"Top {top_n} {lbl} – {title}" if title else f"Top {top_n} {lbl}",
+                    "ranked by hybrid weighted centrality"),
+            )
+            tag = _slug(lbl) + (f"_{_slug(title)}" if title else "")
+            save_plotly(sub, f"centrality_geo_top_n_{tag}")
 
     fig.show(renderer)
 
