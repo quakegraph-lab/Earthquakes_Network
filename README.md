@@ -12,16 +12,16 @@ compared with documented seismic sequences and the DISS fault database.
 
 ## What's inside
 
-- `notebooks/network_custom_hybrid.ipynb` – the main analysis: network
+- `abe_suzuki_network_analysis.ipynb` – the main analysis: network
   construction, degree distribution and power-law fit, centrality, community
   detection (Louvain, InfoMap, HDBSCAN, mixed-membership SBM), assortativity,
   robustness, and a comparison with the DISS seismogenic-fault database.
-- `notebooks/community_known_eq.ipynb` – a focused check of whether the detected
+- `community_known_eq.ipynb` – a focused check of whether the detected
   communities recover four documented Italian sequences (L'Aquila 2009,
   Amatrice–Norcia 2016, Emilia 2012, Umbria–Marche 1997).
 - `presentation.pdf` - the final presentation to expose.
 
-The notebooks contain the figures and the accompanying discussion.
+The notebooks contain the figures and a brief discussion.
 
 ## The network model
 
@@ -35,10 +35,10 @@ by the events' magnitude and an exponential decay in space and time.
 python -m venv venv_earthquakes
 source venv_earthquakes/bin/activate
 pip install -r requirements.txt
-python network_custom_hybrid.py
+jupyter-notebook . &
 ```
 
-The INGV catalog (`data/INGV/`, M ≥ 1.5) is not included in the repository; see
+The INGV catalog (`data/INGV/`, M ≥ 1.5) is included in the repository; see
 `data/INGV/data_info.txt` for the download parameters.
 
 ## Reference
