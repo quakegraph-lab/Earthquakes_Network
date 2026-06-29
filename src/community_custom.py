@@ -37,6 +37,7 @@ import seaborn as sns
 from sklearn.cluster import KMeans
 from sklearn.metrics import normalized_mutual_info_score
 from sklearn.preprocessing import normalize
+from src.network_custom import build_abe_suzuki_network_custom_hybrid
 
 from src.plotutils import savefig, save_plotly, _slug
 
@@ -580,3 +581,125 @@ def plot_nmi_heatmap(nmi_df: pd.DataFrame):
     plt.title("NMI between Community Detection Methods")
     plt.tight_layout()
     plt.show()
+
+
+
+
+
+# ---------------------------------------------------------------------------------------------
+def compute_modularity_from_partition(G: nx.DiGraph, partition: dict) -> float:
+    """
+    Compute modularity on undirected version of G using a given partition.
+    """
+    G_und = G.to_undirected()
+
+    communities = {}
+    for node, cid in partition.items():
+        communities.setdefault(cid, set()).add(node)
+
+    comm_list = list(communities.values())
+
+    return nx.algorithms.community.quality.modularity(
+        G_und, comm_list, weight="weight"
+    )
+
+
+def build_window_network_hybrid(
+    df,
+    start,
+    end,
+    cell_size_km=10,
+    alpha=1.0,
+    r0=50.0,
+    tau_days=0.5,
+):
+    """
+    Build HYBRID Abe–Suzuki network for a time window.
+    """
+
+    df_win = df[(df["time"] >= start) & (df["time"] < end)].copy()
+
+    if len(df_win) < 50:
+        return None
+
+    G = build_abe_suzuki_network_custom_hybrid(
+        df_win,
+        cell_size_km=cell_size_km,
+        spatial_threshold_km=300.0,
+        time_threshold_sec=24 * 3600,
+        alpha=alpha,
+        tau=tau_days * 86400.0,
+        r0=r0,
+        info=False
+    )
+
+    return G
+
+
+
+
+
+def compute_q_over_time_hybrid(
+    df,
+    window_days=10,
+    step_days=1,
+    cell_size_km=10,
+    start_time=None,
+    end_time=None,
+    alpha=1.0,
+    r0=50.0,
+    tau_days=0.5,
+    resolution=1.0,
+):
+    """
+    Modularity evolution Q(t) for HYBRID network.
+    """
+
+    results = []
+
+    if start_time is None:
+        start_time = df["time"].min()
+
+    if end_time is None:
+        end_time = df["time"].max()
+
+    current = start_time
+
+    while current + pd.Timedelta(days=window_days) <= end_time:
+
+        start = current
+        end = current + pd.Timedelta(days=window_days)
+
+        G = build_window_network_hybrid(
+            df, start, end,
+            cell_size_km=cell_size_km,
+            alpha=alpha,
+            r0=r0,
+            tau_days=tau_days
+        )
+
+        if G is None or G.number_of_edges() < 10:
+            current += pd.Timedelta(days=step_days)
+            continue
+
+        # ── Louvain (HYBRID) ──
+        partition = run_louvain_directed_hybrid(
+            G,
+            resolution=resolution
+        )
+
+        # ── Modularity ──
+        Q = compute_modularity_from_partition(G, partition)
+
+        t_center = start + pd.Timedelta(days=window_days / 2)
+
+        results.append({
+            "time": t_center,
+            "Q": Q,
+            "n_nodes": G.number_of_nodes(),
+            "n_edges": G.number_of_edges()
+        })
+
+        current += pd.Timedelta(days=step_days)
+
+    return pd.DataFrame(results)

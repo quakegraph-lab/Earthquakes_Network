@@ -67,115 +67,128 @@ def plot_degree_distribution_linear(
 
 
 def analyze_in_out_degree_distribution(
-    G: nx.Graph,
+    G: nx.DiGraph,
     title: str,
     fit: bool = False,
     save: bool = True,
 ) -> None:
     """
-    Log-log scatter of weighted in- and out-degree distributions with
-    optional OLS power-law fit lines.
-
-    Parameters
-    ----------
-    G : nx.Graph
-        Directed NetworkX graph.
-    title : str
-        Figure title suffix.
-    fit : bool
-        If True, overlay OLS power-law regression lines (k ≥ 2).
+    In/Out DEGREE distribution (NOT strength) for hybrid network.
     """
-    def _get_data(degrees: list, perform_fit: bool):
-        arr = [d for d in degrees if d > 0]
-        counts = pd.Series(arr).value_counts().sort_index()
-        k, P_k = counts.index.values, counts.values / len(arr)
-        if perform_fit and k[k >= 2].size > 2:
-            mask = k >= 2
-            slope, intercept, *_ = linregress(np.log10(k[mask]), np.log10(P_k[mask]))
-            gamma = -slope
-            return k, P_k, k[mask], 10**intercept * k[mask]**(-gamma), gamma
-        return k, P_k, None, None, None
 
-    k_in,  P_in,  kf_in,  lf_in,  g_in  = _get_data(
-        [d for _, d in G.in_degree(weight="weight")],  fit)
-    k_out, P_out, kf_out, lf_out, g_out = _get_data(
-        [d for _, d in G.out_degree(weight="weight")], fit)
+    def _get_data(degrees, perform_fit):
+        arr = [d for d in degrees if d > 0]
+
+        counts = pd.Series(arr).value_counts().sort_index()
+        k = counts.index.values
+        P_k = counts.values / len(arr)
+
+        if perform_fit and len(k[k >= 2]) > 2:
+            mask = k >= 2
+            slope, intercept, r, *_ = linregress(
+                np.log10(k[mask]), np.log10(P_k[mask])
+            )
+            gamma = -slope
+            return k, P_k, k[mask], 10**intercept * k[mask]**(-gamma), gamma, r**2
+
+        return k, P_k, None, None, None, None
+
+    # 🔥 FIX: remove weight
+    k_in, P_in, kf_in, lf_in, g_in, r2_in = _get_data(
+        [d for _, d in G.in_degree()], fit
+    )
+    k_out, P_out, kf_out, lf_out, g_out, r2_out = _get_data(
+        [d for _, d in G.out_degree()], fit
+    )
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.scatter(k_in,  P_in,  color="dodgerblue", alpha=0.6, label="In-Degree")
-    ax.scatter(k_out, P_out, color="salmon",      alpha=0.6, label="Out-Degree")
+
+    ax.scatter(k_in, P_in, color="dodgerblue", alpha=0.6, label="In-degree")
+    ax.scatter(k_out, P_out, color="salmon", alpha=0.6, label="Out-degree")
+
     if fit and kf_in is not None:
-        ax.plot(kf_in,  lf_in,  "b--", label=rf"In fit ($\gamma={g_in:.2f}$)")
+        ax.plot(kf_in, lf_in, "b--", label=rf"In fit ($\gamma={g_in:.2f}$)")
         ax.plot(kf_out, lf_out, "r--", label=rf"Out fit ($\gamma={g_out:.2f}$)")
+
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_title(f"In vs Out Degree Distribution: {title}", fontsize=15)
-    ax.set_xlabel("Degree $k$ (log)", fontsize=13)
-    ax.set_ylabel("Probability $P(k)$ (log)", fontsize=13)
-    ax.legend(fontsize=11)
+    ax.set_title(f"In vs Out Degree Distribution: {title}")
+    ax.set_xlabel("Degree $k$")
+    ax.set_ylabel("Probability $P(k)$")
+
+    ax.legend()
     ax.grid(True, which="both", ls="--", alpha=0.3)
+
     plt.tight_layout()
     if save:
         savefig(f"in_out_degree_distribution_{_slug(title)}")
     plt.show()
 
     if fit and g_in is not None:
-        print(f"[{title}] In γ={g_in:.3f}, Out γ={g_out:.3f}")
-    else:
-        print(f"[{title}] Degree distribution plotted (no fit).")
+        print(f"[{title}] In γ={g_in:.3f} (R²={r2_in:.3f}), "
+              f"Out γ={g_out:.3f} (R²={r2_out:.3f})")
 
 
 def analyze_degree_distribution(
-    G: nx.Graph,
+    G: nx.DiGraph,
     title: str,
     fit: bool = False,
     save: bool = True,
 ) -> None:
     """
-    Log-log scatter of total degree (strength) distribution with optional
-    OLS power-law fit (k ≥ 2).
-
-    Parameters
-    ----------
-    G : nx.Graph
-        NetworkX graph.
-    title : str
-        Figure title suffix.
-    fit : bool
-        If True, overlay OLS power-law regression line.
+    Total DEGREE distribution (undirected) for hybrid network.
     """
-    degrees = [d for _, d in G.degree(weight="weight") if d > 0]
+
+    # 🔥 IMPORTANT: convert to undirected
+    G_und = G.to_undirected()
+
+    degrees = [d for _, d in G_und.degree() if d > 0]
+
     counts = pd.Series(degrees).value_counts().sort_index()
-    k, P_k = counts.index.values, counts.values / len(degrees)
+    k = counts.index.values
+    P_k = counts.values / len(degrees)
 
     fig, ax = plt.subplots(figsize=(9, 6))
-    ax.scatter(k, P_k, color="royalblue", alpha=0.7, edgecolors="k", label="Observed")
+
+    ax.scatter(k, P_k, color="royalblue", alpha=0.7,
+               edgecolors="k", label="Observed")
+
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_title(f"Degree Distribution: {title}", fontsize=15)
-    ax.set_xlabel("Degree $k$", fontsize=13)
-    ax.set_ylabel("Probability $P(k)$", fontsize=13)
+    ax.set_title(f"Degree Distribution: {title}")
+    ax.set_xlabel("Degree $k$")
+    ax.set_ylabel("Probability $P(k)$")
+
     ax.grid(True, which="both", ls="--", alpha=0.3)
 
-    if fit:
+    if fit and len(k[k >= 2]) > 2:
         mask = k >= 2
-        slope, intercept, r, *_ = linregress(np.log10(k[mask]), np.log10(P_k[mask]))
+        slope, intercept, r, *_ = linregress(
+            np.log10(k[mask]), np.log10(P_k[mask])
+        )
         gamma = -slope
-        ax.plot(k[mask], 10**intercept * k[mask]**(-gamma), "r--", linewidth=2,
-                label=rf"Power-law fit ($\gamma \approx {gamma:.2f}$)")
-        print(f"[{title}] γ={gamma:.3f}  R²={r**2:.3f}")
-    else:
-        print(f"[{title}]")
 
-    ax.legend(fontsize=12)
+        ax.plot(
+            k[mask],
+            10**intercept * k[mask]**(-gamma),
+            "r--",
+            linewidth=2,
+            label=rf"Fit ($\gamma \approx {gamma:.2f}$)"
+        )
+
+        print(f"[{title}] γ={gamma:.3f}  R²={r**2:.3f}")
+
+    ax.legend()
     plt.tight_layout()
+
     if save:
         savefig(f"degree_distribution_{_slug(title)}")
+
     plt.show()
 
 
 def analyze_degree_distribution_log_binning(
-    G: nx.Graph,
+    G: nx.DiGraph,
     title: str,
     k_min_fit: float = 10,
     n_bins: int = 25,
@@ -183,69 +196,102 @@ def analyze_degree_distribution_log_binning(
     save: bool = True,
 ) -> None:
     """
-    Degree distribution with logarithmic binning and optional MLE power-law fit.
-
-    Log-binning normalises by bin width, giving probability *density* P(k).
-    When ``gamma_mle`` is supplied the amplitude is fitted by least-squares
-    on the log-binned tail ($k \geq$ ``k_min_fit``) while the slope is fixed
-    to the MLE exponent — giving a visually honest fit without OLS bias.
-
-    Parameters
-    ----------
-    G : nx.Graph
-        NetworkX graph.
-    title : str
-        Figure title suffix.
-    k_min_fit : float
-        Minimum degree used for the fit amplitude and the fit overlay.
-    n_bins : int
-        Number of logarithmically spaced bins.
-    gamma_mle : float or None
-        MLE power-law exponent.  If given, a fit line is drawn on the tail.
+    Degree distribution (UNDIRECTED) with log-binning for hybrid network.
     """
-    degrees = [d for _, d in G.degree(weight="weight") if d > 0]
+
+    # ─────────────────────────────────────────────
+    # 1. USE UNDIRECTED DEGREE (CRUCIAL)
+    # ─────────────────────────────────────────────
+    G_und = G.to_undirected()
+    degrees = [d for _, d in G_und.degree() if d > 0]
+
     if not degrees:
         print("Graph has no edges.")
         return
 
-    bins = np.logspace(np.log10(min(degrees)), np.log10(max(degrees)), n_bins)
+    # ─────────────────────────────────────────────
+    # 2. LOG BINNING
+    # ─────────────────────────────────────────────
+    bins = np.logspace(
+        np.log10(min(degrees)),
+        np.log10(max(degrees)),
+        n_bins + 1
+    )
+
     counts, edges = np.histogram(degrees, bins=bins)
+
     centers = (edges[:-1] + edges[1:]) / 2
     widths  = np.diff(edges)
-    P_k     = counts / (len(degrees) * widths)
 
-    valid    = P_k > 0
-    k_v, P_v = centers[valid], P_k[valid]
+    # PDF normalization
+    P_k = counts / (len(degrees) * widths)
 
+    # remove empty bins
+    valid = (P_k > 0) & (centers > 0)
+    k_v = centers[valid]
+    P_v = P_k[valid]
+
+    # ─────────────────────────────────────────────
+    # 3. PLOT
+    # ─────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(9, 6))
-    ax.scatter(k_v, P_v, color="darkviolet", alpha=0.8, edgecolors="k", s=60,
-               label="Log-binned")
 
+    ax.scatter(
+        k_v, P_v,
+        alpha=0.85,
+        edgecolors="k",
+        s=60,
+        label="Log-binned"
+    )
+
+    # ─────────────────────────────────────────────
+    # 4. MLE FIT (ONLY AMPLITUDE)
+    # ─────────────────────────────────────────────
     if gamma_mle is not None:
         fit_mask = k_v >= k_min_fit
+
         if fit_mask.sum() > 1:
             log_k = np.log10(k_v[fit_mask])
             log_P = np.log10(P_v[fit_mask])
-            intercept = np.mean(log_P + gamma_mle * log_k)
-            fit_k  = np.logspace(np.log10(k_v[fit_mask][0]),
-                                  np.log10(k_v[-1]), 200)
-            fit_P  = 10**intercept * fit_k**(-gamma_mle)
-            ax.plot(fit_k, fit_P, color="crimson", linewidth=2.5, linestyle="--",
-                    label=rf"MLE fit ($k \geq {k_min_fit:.0f}$): $\hat{{\gamma}} = {gamma_mle:.2f}$")
 
+            # amplitude fit (slope fixed)
+            intercept = np.mean(log_P + gamma_mle * log_k)
+
+            fit_k = np.logspace(
+                np.log10(k_v[fit_mask][0]),
+                np.log10(k_v[-1]),
+                200
+            )
+            fit_P = 10**intercept * fit_k**(-gamma_mle)
+
+            ax.plot(
+                fit_k, fit_P,
+                linestyle="--",
+                linewidth=2.5,
+                label=rf"MLE fit ($k \geq {k_min_fit}$): $\gamma={gamma_mle:.2f}$"
+            )
+
+    # ─────────────────────────────────────────────
+    # 5. STYLE
+    # ─────────────────────────────────────────────
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_title(f"Degree Distribution (Log-Binning): {title}", fontsize=15)
-    ax.set_xlabel("Degree $k$", fontsize=13)
-    ax.set_ylabel("Probability Density $P(k)$", fontsize=13)
-    ax.legend(fontsize=12)
+
+    ax.set_title(f"Degree Distribution (Log-Binning): {title}")
+    ax.set_xlabel("Degree $k$")
+    ax.set_ylabel("Probability Density $P(k)$")
+
     ax.grid(True, which="both", ls="--", alpha=0.3)
+    ax.legend()
+
     plt.tight_layout()
+
     if save:
         savefig(f"degree_distribution_log_binning_{_slug(title)}")
+
     plt.show()
 
-    print(f"[{title}] log-binned distribution plotted.")
+    print(f"[{title}] log-binned degree distribution plotted.")
 
 
 def plot_ccdf_with_fit(
@@ -256,60 +302,80 @@ def plot_ccdf_with_fit(
     save: bool = True,
 ) -> None:
     """
-    CCDF of node degree with optional MLE power-law fit.
+    CCDF of node degree (topological) with optional MLE power-law fit.
 
-    For $P(k) \propto k^{-\gamma}$ the CCDF scales as $k^{-(\gamma-1)}$.
-    When ``gamma_mle`` is supplied the amplitude is fitted on the tail while
-    the slope is fixed — giving a clean MLE-anchored overlay.
-
-    Parameters
-    ----------
-    G : nx.Graph
-        NetworkX graph.
-    title : str
-        Figure title suffix.
-    k_min_fit : float
-        Minimum degree for the fit overlay.
-    gamma_mle : float or None
-        MLE power-law exponent.  If given, a fit line is drawn on the tail.
+    Uses pure degree (NOT weighted strength) → correct for scale-free analysis.
     """
-    degrees = np.array([d for _, d in G.degree(weight="weight") if d > 0])
+
+    # ─────────────────────────────────────────────
+    # 1. DEGREE EXTRACTION (PURE TOPOLOGY)
+    # ─────────────────────────────────────────────
+    degrees = np.array([d for _, d in G.degree() if d > 0])
+
     if len(degrees) == 0:
         print("Empty graph.")
         return
 
+    # ─────────────────────────────────────────────
+    # 2. CCDF COMPUTATION
+    # ─────────────────────────────────────────────
     k_vals = np.sort(np.unique(degrees))
-    ccdf   = np.array([np.mean(degrees >= k) for k in k_vals])
+    ccdf = np.array([np.mean(degrees >= k) for k in k_vals])
 
+    # ─────────────────────────────────────────────
+    # 3. PLOT
+    # ─────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(8, 6))
+
     ax.scatter(k_vals, ccdf, s=40, alpha=0.8, label="CCDF")
 
+    # ─────────────────────────────────────────────
+    # 4. MLE FIT OVERLAY
+    # ─────────────────────────────────────────────
     if gamma_mle is not None:
         mask = k_vals >= k_min_fit
-        if mask.sum() > 1:
-            ccdf_exp = gamma_mle - 1
-            log_k    = np.log10(k_vals[mask])
-            log_c    = np.log10(ccdf[mask])
-            intercept = np.mean(log_c + ccdf_exp * log_k)
-            fit_k = np.logspace(np.log10(k_vals[mask][0]),
-                                 np.log10(k_vals[-1]), 200)
-            fit_c = 10**intercept * fit_k**(-ccdf_exp)
-            ax.plot(fit_k, fit_c, color="crimson", linewidth=2.5, linestyle="--",
-                    label=rf"MLE fit: $\hat{{\gamma}} = {gamma_mle:.2f}$")
 
+        if mask.sum() > 1:
+            ccdf_exp = gamma_mle - 1  # key relation
+
+            log_k = np.log10(k_vals[mask])
+            log_c = np.log10(ccdf[mask])
+
+            intercept = np.mean(log_c + ccdf_exp * log_k)
+
+            fit_k = np.logspace(np.log10(k_vals[mask][0]),
+                                np.log10(k_vals[-1]), 200)
+
+            fit_c = 10**intercept * fit_k**(-ccdf_exp)
+
+            ax.plot(
+                fit_k, fit_c,
+                color="crimson",
+                linewidth=2.5,
+                linestyle="--",
+                label=rf"MLE fit ($\gamma={gamma_mle:.2f}$)"
+            )
+
+    # ─────────────────────────────────────────────
+    # 5. STYLE
+    # ─────────────────────────────────────────────
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("Degree $k$", fontsize=12)
     ax.set_ylabel("$P(K \\geq k)$", fontsize=12)
     ax.set_title(f"CCDF Degree Distribution: {title}", fontsize=14)
+
     ax.legend()
     ax.grid(True, which="both", ls="--", alpha=0.3)
+
     plt.tight_layout()
+
     if save:
         savefig(f"ccdf_{_slug(title)}")
+
     plt.show()
 
-    print(f"[{title}] CCDF plotted.")
+    print(f"[{title}] CCDF plotted (degree-based).")
 
 
 

@@ -17,14 +17,14 @@ def analyze_degree_correlations_hybrid(
     G: nx.Graph,
     gamma: float,
     num_bins: int = 15,
-    weighted: bool = False,
     save: bool = True
 ):
     """
-    Assortativity analysis for hybrid seismic network.
+    Topological assortativity analysis (degree-based) for hybrid network.
 
-    If weighted=True, uses edge weights (interaction strength).
-    Otherwise uses purely topological structure.
+    IMPORTANT:
+    - Uses pure degree (NOT weights)
+    - Suitable for comparison with ER / configuration model
     """
 
     # ─────────────────────────────────────────────
@@ -37,22 +37,18 @@ def analyze_degree_correlations_hybrid(
     L = G_simple.number_of_edges()
 
     # ─────────────────────────────────────────────
-    # 2. DEGREE OR STRENGTH
+    # 2. k_nn(k)
     # ─────────────────────────────────────────────
-    if weighted:
-        degrees = dict(G_simple.degree(weight="weight"))
-        deg_label = "Strength s"
-    else:
-        degrees = dict(G_simple.degree())
-        deg_label = "Degree k"
+    knn_dict = nx.average_degree_connectivity(G_simple)
 
-    # k_nn(k)
-    knn_dict = nx.average_degree_connectivity(G_simple, weight="weight" if weighted else None)
+    # degree counts (important for weighting!)
+    degrees = [d for _, d in G_simple.degree()]
+    counts = pd.Series(degrees).value_counts().to_dict()
 
     df_raw = pd.DataFrame([
-        {"k": k, "knn": v}
-        for k, v in knn_dict.items()
-    ]).sort_values("k")
+        {"k": k, "knn": knn_dict[k], "count": counts.get(k, 1)}
+        for k in knn_dict
+    ]).sort_values("k").reset_index(drop=True)
 
     df_raw = df_raw[(df_raw["k"] > 0) & (df_raw["knn"] > 0)]
 
@@ -63,71 +59,104 @@ def analyze_degree_correlations_hybrid(
     k_nat = N ** (1.0 / (gamma - 1.0)) if gamma > 1.0 else np.nan
 
     # ─────────────────────────────────────────────
-    # 4. LOG BINNING
+    # 4. LOG BINNING (weighted!)
     # ─────────────────────────────────────────────
     k_min, k_max = df_raw["k"].min(), df_raw["k"].max()
+
     bin_edges = np.logspace(np.log10(k_min), np.log10(k_max), num_bins + 1)
+    bin_edges[0] -= 1e-5
+    bin_edges[-1] += 1e-5
 
-    df_raw["bin"] = pd.cut(df_raw["k"], bins=bin_edges, include_lowest=True)
+    df_raw["bin"] = pd.cut(df_raw["k"], bins=bin_edges)
 
-    binned = []
-    for _, g in df_raw.groupby("bin"):
-        if len(g) == 0:
+    binned_rows = []
+    for _, group in df_raw.groupby("bin", observed=False):
+        if len(group) == 0:
             continue
-        binned.append({
-            "k": np.average(g["k"]),
-            "knn": np.average(g["knn"])
+
+        total_nodes = group["count"].sum()
+
+        w_k = np.average(group["k"], weights=group["count"])
+        w_knn = np.average(group["knn"], weights=group["count"])
+
+        binned_rows.append({
+            "k": w_k,
+            "knn": w_knn,
+            "count": total_nodes
         })
 
-    df_binned = pd.DataFrame(binned)
+    df_binned = pd.DataFrame(binned_rows)
 
     # ─────────────────────────────────────────────
-    # 5. FIT (ONLY BELOW STRUCTURAL CUTOFF)
+    # 5. FIT (below structural cutoff)
     # ─────────────────────────────────────────────
     df_fit = df_binned[df_binned["k"] < k_str]
 
     if len(df_fit) >= 2:
-        mu, b = np.polyfit(np.log(df_fit["k"]), np.log(df_fit["knn"]), 1)
+        log_k = np.log(df_fit["k"].values)
+        log_knn = np.log(df_fit["knn"].values)
+
+        mu, b = np.polyfit(log_k, log_knn, 1)
         has_fit = True
     else:
         mu, b = np.nan, np.nan
         has_fit = False
+        print("Warning: Not enough points for fit.")
 
     # ─────────────────────────────────────────────
     # 6. PLOT
     # ─────────────────────────────────────────────
     plt.figure(figsize=(15, 6))
 
-    plt.scatter(df_raw["k"], df_raw["knn"],
-                color="gray", alpha=0.3, s=15, label="Raw")
+    # raw
+    plt.scatter(
+        df_raw["k"], df_raw["knn"],
+        color="gray", alpha=0.3, s=15,
+        label="Raw data"
+    )
 
-    plt.scatter(df_binned["k"], df_binned["knn"],
-                color="purple", s=40, edgecolor="black", label="Binned")
+    # binned
+    plt.scatter(
+        df_binned["k"], df_binned["knn"],
+        color="purple", s=40, edgecolor="black",
+        label="Log-binned"
+    )
 
+    # fit
     if has_fit:
         k_line = np.linspace(df_fit["k"].min(), k_str, 200)
-        plt.plot(k_line, np.exp(b) * k_line**mu,
-                 "--", color="green", label=f"Fit μ={mu:.3f}")
+        knn_fit = np.exp(b) * k_line**mu
 
-    plt.axvline(k_str, color="red", linestyle="--",
-                label=f"k_str={k_str:.1f}")
+        plt.plot(
+            k_line, knn_fit,
+            "--", color="mediumpurple", linewidth=2,
+            label=f"Fit μ = {mu:.3f}"
+        )
 
+    # cutoff
+    plt.axvline(
+        k_str, color="red", linestyle="--",
+        label=f"k_str = {k_str:.1f}"
+    )
+
+    # layout
     plt.xscale("log")
     plt.yscale("log")
-    plt.xlabel(deg_label)
-    plt.ylabel("k_nn(k)")
-    plt.title("Assortativity Analysis (Hybrid Network)")
+    plt.xlabel("Degree k")
+    plt.ylabel(r"$k_{nn}(k)$")
+    plt.title("Assortativity Analysis (Degree-based, Hybrid Network)")
     plt.legend()
     plt.grid(True, which="both", ls="--", alpha=0.3)
 
     if save:
-        savefig("knn_assortativity_hybrid")
+        savefig("knn_assortativity_hybrid_degree")
 
     plt.show()
 
     # ─────────────────────────────────────────────
     # 7. OUTPUT
     # ─────────────────────────────────────────────
+    print("====================================")
     print("N:", N, "L:", L)
     print("γ:", gamma)
     print("k_str:", k_str)
@@ -135,6 +164,15 @@ def analyze_degree_correlations_hybrid(
 
     if has_fit:
         print("μ:", mu)
+
+        if mu > 0.05:
+            print("→ Assortative")
+        elif mu < -0.05:
+            print("→ Disassortative")
+        else:
+            print("→ Neutral")
+
+    print("====================================")
 
     return df_raw, df_binned, {"mu": mu, "k_str": k_str, "k_nat": k_nat}
 
@@ -196,110 +234,187 @@ def fit_intrinsic_slope(df_binned: pd.DataFrame, k_str: float) -> tuple[float, f
 
 
 
-def run_binned_randomization_test_hybrid(
-    G: nx.DiGraph,
+def analyze_assortativity_with_randomization_hybrid(
+    G: nx.Graph,
     gamma: float,
     num_bins: int = 15,
     n_swaps_per_edge: int = 10,
-    use_weighted: bool = False,
     save: bool = True
 ):
     """
-    Degree-preserving randomization test for hybrid seismic network.
+    Assortativity analysis with degree-preserving randomization.
 
-    IMPORTANT:
-    - rewiring preserves ONLY topology (not weights)
-    - weights are ignored in null model
-    - interpretation is purely structural
+    Uses ONLY degree (topological assortativity).
+    Compares original vs rewired network.
     """
 
     # ─────────────────────────────────────────────
-    # 1. ORIGINAL NETWORK
+    # 1. PREPROCESS GRAPH
     # ─────────────────────────────────────────────
-    G_orig = nx.Graph(G)
-    G_orig.remove_edges_from(nx.selfloop_edges(G_orig))
+    G_simple = nx.Graph(G)
+    G_simple.remove_edges_from(nx.selfloop_edges(G_simple))
 
-    N = G_orig.number_of_nodes()
-    L = G_orig.number_of_edges()
+    N = G_simple.number_of_nodes()
+    L = G_simple.number_of_edges()
 
+    # ─────────────────────────────────────────────
+    # 2. k_nn(k) ORIGINAL
+    # ─────────────────────────────────────────────
+    knn_dict = nx.average_degree_connectivity(G_simple)
+
+    degrees = [d for _, d in G_simple.degree()]
+    counts = pd.Series(degrees).value_counts().to_dict()
+
+    df_raw = pd.DataFrame([
+        {"k": k, "knn": knn_dict[k], "count": counts[k]}
+        for k in knn_dict
+    ]).sort_values("k")
+
+    df_raw = df_raw[(df_raw["k"] > 0) & (df_raw["knn"] > 0)]
+
+    # ─────────────────────────────────────────────
+    # 3. CUTOFFS
+    # ─────────────────────────────────────────────
     k_str = np.sqrt(2 * L)
-    k_nat = N ** (1.0 / (gamma - 1.0)) if gamma > 1.0 else np.nan
-
-    df_raw_orig, df_bin_orig = preprocess_to_binned_df(G_orig, num_bins)
-    mu_orig, b_orig = fit_intrinsic_slope(df_bin_orig, k_str)
+    k_nat = N ** (1.0 / (gamma - 1.0)) if gamma > 1 else np.nan
 
     # ─────────────────────────────────────────────
-    # 2. RANDOMIZATION (TOPOLOGY ONLY)
+    # 4. LOG BINNING (ORIGINAL)
     # ─────────────────────────────────────────────
-    print("Rewiring network (degree-preserving null model)...")
+    def log_bin(df):
+        k_min, k_max = df["k"].min(), df["k"].max()
+        bins = np.logspace(np.log10(k_min), np.log10(k_max), num_bins + 1)
+        bins[0] -= 1e-5
+        bins[-1] += 1e-5
 
-    G_rand = G_orig.copy()
+        df["bin"] = pd.cut(df["k"], bins=bins)
 
+        rows = []
+        for _, g in df.groupby("bin", observed=False):
+            if len(g) == 0:
+                continue
+            rows.append({
+                "k": np.average(g["k"], weights=g["count"]),
+                "knn": np.average(g["knn"], weights=g["count"]),
+                "count": g["count"].sum()
+            })
+        return pd.DataFrame(rows)
+
+    df_binned = log_bin(df_raw.copy())
+
+    # ─────────────────────────────────────────────
+    # 5. FIT ORIGINAL
+    # ─────────────────────────────────────────────
+    def fit(df):
+        df_fit = df[df["k"] < k_str]
+        if len(df_fit) >= 2:
+            mu, b = np.polyfit(np.log(df_fit["k"]), np.log(df_fit["knn"]), 1)
+            return mu, b
+        return np.nan, np.nan
+
+    mu_orig, b_orig = fit(df_binned)
+
+    # ─────────────────────────────────────────────
+    # 6. RANDOMIZATION (DEGREE-PRESERVING)
+    # ─────────────────────────────────────────────
+    print("Rewiring network (degree-preserving)...")
+
+    G_rand = G_simple.copy()
     nx.double_edge_swap(
         G_rand,
         nswap=L * n_swaps_per_edge,
         max_tries=L * n_swaps_per_edge * 10
     )
 
-    df_raw_rand, df_bin_rand = preprocess_to_binned_df(G_rand, num_bins)
-    mu_rand, b_rand = fit_intrinsic_slope(df_bin_rand, k_str)
+    knn_rand = nx.average_degree_connectivity(G_rand)
+
+    degrees_rand = [d for _, d in G_rand.degree()]
+    counts_rand = pd.Series(degrees_rand).value_counts().to_dict()
+
+    df_raw_rand = pd.DataFrame([
+        {"k": k, "knn": knn_rand[k], "count": counts_rand[k]}
+        for k in knn_rand
+    ]).sort_values("k")
+
+    df_raw_rand = df_raw_rand[(df_raw_rand["k"] > 0) & (df_raw_rand["knn"] > 0)]
+
+    df_binned_rand = log_bin(df_raw_rand.copy())
+
+    mu_rand, b_rand = fit(df_binned_rand)
 
     # ─────────────────────────────────────────────
-    # 3. PLOT
+    # 7. PLOT
     # ─────────────────────────────────────────────
     plt.figure(figsize=(15, 6))
 
-    # original
-    plt.scatter(df_bin_orig["k"], df_bin_orig["knn"],
-                color="purple", label="Original")
+    # raw original
+    plt.scatter(df_raw["k"], df_raw["knn"],
+                color="gray", alpha=0.2, s=12,
+                label="Raw (original)")
 
-    # randomized
-    plt.scatter(df_bin_rand["k"], df_bin_rand["knn"],
-                color="orange", label="Rewired")
+    # binned original
+    plt.scatter(df_binned["k"], df_binned["knn"],
+                color="purple", s=40, edgecolor="black",
+                label="Binned (original)")
 
-    # fits
+    # binned random
+    plt.scatter(df_binned_rand["k"], df_binned_rand["knn"],
+                color="orange", marker="D", s=40, edgecolor="black",
+                label="Binned (rewired)")
+
+    # fit original
     if not np.isnan(mu_orig):
-        k_line = np.linspace(df_bin_orig["k"].min(), k_str, 200)
+        k_line = np.linspace(df_binned["k"].min(), k_str, 200)
         plt.plot(k_line, np.exp(b_orig) * k_line**mu_orig,
-                 "--", color="purple")
+                 "--", color="mediumpurple",
+                 label=f"Original μ={mu_orig:.3f}")
 
+    # fit random
     if not np.isnan(mu_rand):
-        k_line = np.linspace(df_bin_rand["k"].min(), k_str, 200)
+        k_line = np.linspace(df_binned_rand["k"].min(), k_str, 200)
         plt.plot(k_line, np.exp(b_rand) * k_line**mu_rand,
-                 "--", color="orange")
+                 ":", color="orange",
+                 label=f"Rewired μ={mu_rand:.3f}")
 
-    plt.axvline(k_str, color="red", linestyle="--")
+    # cutoff
+    plt.axvline(k_str, color="red", linestyle="--",
+                label=f"k_str={k_str:.1f}")
 
     plt.xscale("log")
     plt.yscale("log")
     plt.xlabel("Degree k")
     plt.ylabel("k_nn(k)")
-    plt.title("Assortativity: Original vs Degree-Preserving Null Model")
+    plt.title("Assortativity with Randomization (Hybrid Network)")
     plt.legend()
     plt.grid(True, which="both", ls="--", alpha=0.3)
 
     if save:
-        savefig("knn_randomization_hybrid")
+        savefig("knn_assortativity_randomized_hybrid")
 
     plt.show()
 
     # ─────────────────────────────────────────────
-    # 4. OUTPUT
+    # 8. INTERPRETATION
     # ─────────────────────────────────────────────
-    print("===================================")
-    print(f"k_str = {k_str:.3f}")
-    print(f"μ_orig = {mu_orig:.4f}")
-    print(f"μ_rand = {mu_rand:.4f}")
-    print(f"Δμ = {abs(mu_orig - mu_rand):.4f}")
+    diff = abs(mu_orig - mu_rand)
 
-    if abs(mu_orig - mu_rand) < 0.03:
-        print("→ structurally random mixing")
+    print("\n========== RESULTS ==========")
+    print(f"μ original : {mu_orig:.4f}")
+    print(f"μ random   : {mu_rand:.4f}")
+    print(f"|Δμ|       : {diff:.4f}")
+    print("----------------------------")
+
+    if diff < 0.03:
+        print("→ Neutral mixing (structure-driven only)")
     else:
-        print("→ non-trivial structural correlations")
+        print("→ Genuine correlations present")
 
-    print("===================================")
-
-    return df_raw_orig, df_bin_orig, df_raw_rand, df_bin_rand
+    return {
+        "mu_orig": mu_orig,
+        "mu_rand": mu_rand,
+        "k_str": k_str,
+        "k_nat": k_nat
+    }
 
 
 
