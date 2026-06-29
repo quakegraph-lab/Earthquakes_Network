@@ -11,8 +11,8 @@ We focus on five robust, interpretable measures:
 CORE MEASURES (used in analysis)
 --------------------------------------------------
 
-Degree       – total interaction strength (weighted degree),
-               proxy for overall seismic activity of a cell.
+Degree       – number of interacting neighbours (unweighted degree),
+               proxy for the connectivity of a cell.
 
 PageRank     – stationary flow of seismic influence through the network,
                identifying persistent "stress sinks" (in-flow / authority side).
@@ -25,9 +25,6 @@ CheiRank     – PageRank on the transposed network (A^T, i.e. G.reverse()),
 Closeness    – how quickly a cell can be reached by all others via shortest
                paths (in-closeness), proxy for global accessibility as a sink.
 
-Closeness_out – closeness on the transposed network, how quickly a cell
-               reaches all others (out-closeness / source side).
-
 Betweenness  – how often a cell lies on shortest paths,
                identifies structural bridges between fault systems.
 
@@ -36,7 +33,7 @@ topology). Edge weight here is an interaction *strength* (high = strong link),
 not a distance, so feeding it to a shortest-path algorithm would invert its
 meaning (it would treat strong links as long detours). A correct weighted
 variant would require distance = 1/weight; we keep the unweighted topology
-instead. Degree, PageRank and CheiRank do use the weights.
+instead. PageRank and CheiRank do use the weights (degree is the unweighted count).
 
 Clustering   – local density of weighted interactions,
                identifies coherent seismic neighborhoods / fault junctions.
@@ -54,7 +51,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import seaborn as sns
 
-from src.plotutils import savefig, save_plotly, _slug
+from src.plotutils import savefig, save_plotly, _slug, pres_title
 
 log = logging.getLogger(__name__)
 
@@ -63,24 +60,22 @@ _METRICS = [
     "PageRank",
     "CheiRank",
     "Closeness",
-    "Closeness_out",
     "Betweenness",
     "Clustering",
 ]
 _LABELS = {
-    "Degree":        "Strength\n(total interaction)",
+    "Degree":        "Degree",
     "PageRank":      "PageRank\n(stress sinks)",
     "CheiRank":      "CheiRank\n(stress sources)",
-    "Closeness":     "Closeness in\n(accessibility as sink)",
-    "Closeness_out": "Closeness out\n(accessibility as source)",
-    "Betweenness":   "Betweenness\n(fault bridges)",
-    "Clustering":    "Clustering\n(local interaction density)",
+    "Closeness":     "Closeness in",
+    "Betweenness":   "Betweenness",
+    "Clustering":    "Clustering",
 }
 
 
 _DEFAULT_MEASURES = frozenset({
     "Degree", "PageRank", "CheiRank",
-    "Closeness", "Closeness_out", "Betweenness", "Clustering",
+    "Closeness", "Betweenness", "Clustering",
 })
 
 
@@ -106,15 +101,15 @@ def compute_all_centralities_hybrid(
 
     # --- Transposed network (A^T) for out-flow / source-side measures ---
     # G.reverse() flips every edge i->j into j->i; its adjacency is A^T.
-    # Built once and shared by CheiRank and out-closeness.
-    if _req & {"CheiRank", "Closeness_out"}:
+    # Built once and shared by CheiRank.
+    if _req & {"CheiRank"}:
         G_rev = G.reverse(copy=False)
 
-    # --- 1. Degree (weighted strength) ---
+    # --- 1. Degree (unweighted) ---
     if "Degree" in _req:
-        log.info("Weighted degree (strength)...")
+        log.info("Degree...")
         t0 = time.time()
-        deg_cent = dict(G.degree(weight="weight"))
+        deg_cent = dict(G.degree())
         log.info("  %.1fs", time.time() - t0)
 
     # --- 2. PageRank (weighted flow, in-flow / sink side) ---
@@ -136,13 +131,6 @@ def compute_all_centralities_hybrid(
         log.info("Closeness centrality (in)...")
         t0 = time.time()
         close_cent = nx.closeness_centrality(G)
-        log.info("  %.1fs", time.time() - t0)
-
-    # --- 3b. Out-closeness = closeness on the transposed network (source side) ---
-    if "Closeness_out" in _req:
-        log.info("Closeness centrality (out, on A^T)...")
-        t0 = time.time()
-        close_out_cent = nx.closeness_centrality(G_rev)
         log.info("  %.1fs", time.time() - t0)
 
     # --- 4. Betweenness ---
@@ -186,9 +174,6 @@ def compute_all_centralities_hybrid(
 
         if "Closeness" in _req:
             row["Closeness"] = close_cent.get(node, 0.0)
-
-        if "Closeness_out" in _req:
-            row["Closeness_out"] = close_out_cent.get(node, 0.0)
 
         if "Betweenness" in _req:
             row["Betweenness"] = bet_cent.get(node, 0.0)
@@ -260,14 +245,12 @@ def plot_centrality_correlation_hybrid(
         for m in available
     ]
 
-    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=9)
-    ax.set_yticklabels(labels, rotation=0, fontsize=9)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_yticklabels(labels, rotation=0)
 
-    ax.set_title(
-        f"Centrality Correlation (Spearman, hybrid network): {title}",
-        fontsize=13,
-        pad=12,
-    )
+    # minimal title: the colorbar already reads "Spearman ρ" and the slide header
+    # carries the catalog, so a short title fits the narrow square-heatmap band
+    ax.set_title("Centrality correlation", pad=12)
 
     plt.tight_layout()
 
@@ -344,21 +327,21 @@ def plot_pagerank_cheirank_2d(
         ])
         for _, r in extremes.iterrows():
             ax.annotate(str(r["cell_id"]), (r["PageRank"], r["CheiRank"]),
-                        fontsize=7, alpha=0.7,
+                        fontsize=10, alpha=0.7,
                         xytext=(3, 3), textcoords="offset points")
 
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("PageRank  (in-flow / stress sink)")
     ax.set_ylabel("CheiRank  (out-flow / stress source)")
-    ax.set_title(f"PageRank–CheiRank 2D ranking: {title}", fontsize=13, pad=12)
-    ax.legend(loc="lower right", fontsize=9)
+    ax.set_title(f"PageRank–CheiRank 2D ranking: {title}", pad=12)
+    ax.legend(loc="lower right")
 
     cbar = fig.colorbar(sc, ax=ax, label=r"$\log_{10}(\mathrm{PageRank}/\mathrm{CheiRank})$")
     cbar.ax.text(0.5, 1.02, "sink", transform=cbar.ax.transAxes,
-                 ha="center", va="bottom", fontsize=8)
+                 ha="center", va="bottom", fontsize=12)
     cbar.ax.text(0.5, -0.02, "source", transform=cbar.ax.transAxes,
-                 ha="center", va="top", fontsize=8)
+                 ha="center", va="top", fontsize=12)
 
     plt.tight_layout()
     if save:
@@ -377,6 +360,7 @@ def plot_geo_top_n_interactive_hybrid(
     height: int = 600,
     width: int = 1100,
     save: bool = True,
+    renderer: str | None = None,
 ) -> None:
     """
     Interactive Mapbox visualization of top-N hybrid centrality nodes.
@@ -387,6 +371,9 @@ def plot_geo_top_n_interactive_hybrid(
     - closeness (global accessibility)
     - betweenness (fault bridges)
     - clustering (local interaction density)
+
+    Pass ``renderer="png"`` (or ``"svg"`` / ``"pdf"``) to render a static image
+    instead of the live figure (avoids exhausting the browser WebGL context cap).
     """
 
     # Only hybrid-valid metrics
@@ -491,14 +478,16 @@ def plot_geo_top_n_interactive_hybrid(
         margin=dict(r=0, t=50, l=0, b=0),
         width=width,
         height=height,
-        title=f"Top {top_n} Seismic Cells (Hybrid Centrality) – {title}",
+        title=pres_title(
+            f"Top {top_n} central cells – {title}",
+            "ranked by hybrid weighted centrality (dropdown = metric)"),
         legend_title="Metric",
     )
 
     if save:
         save_plotly(fig, f"centrality_geo_top_n_hybrid_{_slug(title)}")
 
-    fig.show()
+    fig.show(renderer)
 
 
 
@@ -518,6 +507,7 @@ def plot_geo_centrality_overlap_hybrid(
     height: int = 600,
     width: int = 1100,
     save: bool = True,
+    renderer: str | None = None,
 ) -> None:
     """
     Composite map showing nodes that appear in the top-N lists
@@ -531,6 +521,9 @@ def plot_geo_centrality_overlap_hybrid(
     weighted interaction strength, flow (PageRank),
     accessibility (closeness), bridges (betweenness),
     and local interaction density (clustering).
+
+    Pass ``renderer="png"`` (or ``"svg"`` / ``"pdf"``) to render a static image
+    instead of the live figure (avoids exhausting the browser WebGL context cap).
     """
 
     # Only hybrid-compatible metrics
@@ -582,7 +575,9 @@ def plot_geo_centrality_overlap_hybrid(
             **hover_extra,
         },
         mapbox_style="carto-positron",
-        title=f"Centrality Convergence (Hybrid): Top-{top_n} Overlap – {title}",
+        title=pres_title(
+            f"Centrality convergence: top-{top_n} overlap – {title}",
+            "cells appearing in multiple centrality top-N lists"),
     )
 
     map_cfg = {
@@ -607,4 +602,4 @@ def plot_geo_centrality_overlap_hybrid(
     if save:
         save_plotly(fig, f"centrality_geo_overlap_hybrid_{_slug(title)}")
 
-    fig.show()
+    fig.show(renderer)

@@ -35,6 +35,48 @@ _SAVE_JPG: bool = False
 _SAVE_PDF: bool = False
 _FIGURES_DIR: Path | None = None
 
+# ── Presentation mode, set by setup_presentation_style() ──────────────────────
+# When True, map/plot helpers render slide-ready figures: the project font
+# (Latin Modern Sans, matching the UniPD Beamer deck), projection-scale fonts,
+# and short titles (the small methodology sub-caption is dropped – see
+# ``pres_title``). Left False for the normal screen/print notebooks.
+_PRESENTATION: bool = False
+# Font used by both matplotlib and the Plotly ``eqpres`` template.
+# CMU Sans Serif (Computer Modern Unicode) is visually identical to the UniPD
+# Beamer deck's Latin Modern Sans but, unlike lmsans, carries the full Greek
+# block — labels use ρ, π, γ, σ, μ, τ, Δ etc., which plain LM Sans silently
+# drops in both matplotlib and kaleido. The deck itself renders Greek from its
+# *math* font (Computer Modern), so CMU Sans matches that too.
+PRES_FONT: str = "CMU Sans Serif"
+
+
+def pres_title(main: str, sub: str = "") -> str:
+    """
+    Build a figure title, dropping the methodology sub-caption in presentation mode.
+
+    In the normal notebooks the maps carry a small ``<sup>`` line under the title
+    (e.g. *"all 1,800 cells, colour = log₁₀(strength), top-2% links"*) so the
+    figure is self-documenting. On a projected slide that line is unreadable and
+    redundant with the slide header, so presentation mode returns ``main`` alone.
+
+    Parameters
+    ----------
+    main : str
+        Primary title text.
+    sub : str
+        Methodology caption (rendered as a smaller ``<sup>`` second line) – kept
+        in normal mode, omitted in presentation mode.
+
+    Returns
+    -------
+    str
+        ``main`` in presentation mode (or when ``sub`` is empty); otherwise
+        ``"{main}<br><sup>{sub}</sup>"``.
+    """
+    if _PRESENTATION or not sub:
+        return main
+    return f"{main}<br><sup>{sub}</sup>"
+
 
 def setup_matplotlib() -> None:
     """
@@ -63,6 +105,85 @@ def setup_matplotlib() -> None:
     import warnings
     warnings.filterwarnings("ignore", message=".*tight_layout.*")
     warnings.filterwarnings("ignore", message=".*Axes that are not compatible.*")
+
+
+def setup_presentation_style(font: str = PRES_FONT) -> None:
+    """
+    Switch all figures to slide-ready styling for the final presentation.
+
+    Call once at the top of a script, *after* :func:`setup_matplotlib`. It is
+    opt-in: scripts that do not call it keep the normal screen/print styling.
+    It does three things:
+
+    1. **Font match** – sets matplotlib and the Plotly ``eqpres`` template to
+       ``font`` (default *CMU Sans Serif*, the Greek-complete twin of the UniPD
+       Beamer deck's Latin Modern Sans – see :data:`PRES_FONT`), and points
+       matplotlib mathtext at Computer Modern (``cm``) so in-figure math matches
+       the slide math.
+    2. **Projection sizes** – enlarges titles/labels/ticks/legends well beyond
+       print sizes so they read from the back of the room.
+    3. **Light theme** – white background, dark text, faint grid (the deck is a
+       light theme; the maps already use the ``carto-positron`` light basemap).
+
+    It also flips the module ``_PRESENTATION`` flag, which makes
+    :func:`pres_title` drop the methodology sub-captions (see that function).
+
+    Parameters
+    ----------
+    font : str
+        Font family for every figure. Must be installed/visible to fontconfig
+        (so both matplotlib and kaleido can resolve it). Defaults to
+        :data:`PRES_FONT`.
+    """
+    global _PRESENTATION, PRES_FONT
+    _PRESENTATION = True
+    PRES_FONT = font
+
+    # 1+2+3 – matplotlib: font, projection sizes, light theme, CM math
+    plt.rcParams.update({
+        "font.family":          "sans-serif",
+        "font.sans-serif":      [font, "Latin Modern Sans", "DejaVu Sans"],
+        "mathtext.fontset":     "cm",
+        "font.size":            16,
+        "axes.titlesize":       20,
+        "axes.labelsize":       17,
+        "xtick.labelsize":      14,
+        "ytick.labelsize":      14,
+        "legend.fontsize":      14,
+        "figure.titlesize":     22,
+        "axes.facecolor":       "white",
+        "figure.facecolor":     "white",
+        "axes.edgecolor":       "#333333",
+        "text.color":           "#222222",
+        "axes.labelcolor":      "#222222",
+        "xtick.color":          "#222222",
+        "ytick.color":          "#222222",
+        "grid.alpha":           0.25,
+    })
+
+    # 1+2+3 – Plotly: register the eqpres template on top of plotly_white
+    import plotly.graph_objects as go
+    import plotly.io as pio
+    import plotly.express as px
+
+    eqpres = go.layout.Template()
+    eqpres.layout.font = dict(family=font, size=16, color="#222222")
+    eqpres.layout.title = dict(font=dict(family=font, size=22, color="#222222"),
+                               x=0.02, xanchor="left")
+    eqpres.layout.legend = dict(font=dict(family=font, size=15))
+    eqpres.layout.paper_bgcolor = "white"
+    eqpres.layout.plot_bgcolor = "white"
+    eqpres.layout.colorway = px.colors.qualitative.Bold
+    eqpres.layout.coloraxis = dict(colorscale="plasma")
+    pio.templates["eqpres"] = eqpres
+    pio.templates.default = "plotly_white+eqpres"
+
+    # Note: kaleido default_scale is intentionally left at 1. Saved figures stay
+    # crisp because save_plotly() passes scale explicitly (JPG scale=3, PDF is
+    # vector). Bumping default_scale only enlarges the inline fig.show() render,
+    # which makes notebook output oversized in presentation mode.
+
+    log.info("Presentation style ON (font=%s, light theme, projection sizes)", font)
 
 
 def configure_saves(

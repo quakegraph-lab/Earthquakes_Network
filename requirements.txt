@@ -31,12 +31,6 @@ igraph>=0.11             # python-igraph, required by leidenalg
 hdbscan>=0.8.33          # HDBSCAN density-based community detection
 karateclub>=1.3.3        # BigCLAM overlapping community detection
 
-# ── Power-law fitting ─────────────────────────────────────────────────────────
-powerlaw>=1.4
-
-# ── Force-directed layout ─────────────────────────────────────────────────────
-fa2-modified>=0.3        # ForceAtlas2 (pure Python, works on Python 3.11+)
-
 # ── Notebook infrastructure ───────────────────────────────────────────────────
 jupyterlab>=4.0
 nbformat>=5.9

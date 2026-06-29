@@ -153,15 +153,6 @@ def plot_robustness_curves(
             label=style["label"],
         )
 
-    # Threshold annotation: fraction where GCC drops below 50%
-    for label, df in results.items():
-        below = df[df["gcc_fraction"] < 0.5]
-        if not below.empty:
-            xc = float(below["fraction_removed"].iloc[0])
-            style = _STYLE.get(label, {})
-            ax.axvline(xc, color=style.get("color", "gray"),
-                       linestyle=":", linewidth=0.8, alpha=0.5)
-
     ax.set_xlabel("Fraction of nodes removed", fontsize=12)
     ax.set_ylabel("GCC size / original N", fontsize=12)
     ax.set_title(f"Network Robustness: {title}", fontsize=13)

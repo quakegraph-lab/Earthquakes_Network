@@ -40,18 +40,14 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import normalized_mutual_info_score
 from sklearn.preprocessing import normalize
 
-from src.plotutils import savefig, save_plotly, _slug
+from src.plotutils import savefig, save_plotly, _slug, pres_title
 
-from src.network import (
-    build_abe_suzuki_network,
-    discretize_space_3d
-)
+from src.network import discretize_space_3d
+from src.network_custom import build_abe_suzuki_network_custom_hybrid
 
 log = logging.getLogger(__name__)
 
 _PALETTE = px.colors.qualitative.Bold
-
-
 
 
 # ── Type alias ───────────────────────────────────────────────────────────────
@@ -172,8 +168,6 @@ def run_louvain_directed_hybrid(
 
     return _run_leiden(G, seed=seed, resolution=resolution,
                        partition_type=partition_type)
-
-
 
 
 def run_louvain_consensus_hybrid(
@@ -301,8 +295,6 @@ def run_louvain_consensus_hybrid(
         return run_louvain_hybrid(
             current_graph, resolution=resolution
         )
-
-
 
 
 def run_infomap_hybrid(
@@ -467,12 +459,21 @@ def plot_community_geo_hybrid(
     height: int = 600,
     width: int = 1100,
     save: bool = True,
+    renderer: str | None = None,
 ) -> None:
     """
     Geographic visualization of communities in the hybrid earthquake network.
 
     Node size reflects weighted degree (interaction strength).
     Only sufficiently large communities are shown.
+
+    Parameters
+    ----------
+    renderer : str or None
+        Plotly renderer passed to ``fig.show``. ``None`` (default) shows the live
+        interactive WebGL map. Pass ``"png"`` (or ``"svg"`` / ``"pdf"``) to render a
+        **static image** instead, so repeated maps do not exhaust the browser's
+        WebGL context cap (older maps going blank).
     """
 
     rows = []
@@ -521,10 +522,9 @@ def plot_community_geo_hybrid(
             "size_val": False,
         },
         mapbox_style="carto-positron",
-        title=(
-            f"Seismic Communities (Hybrid): {method_name}"
-            f"<br><sup>{n_shown} communities (size ≥ {min_community_size} cells)"
-            f", {title}</sup>"
+        title=pres_title(
+            f"Seismic Communities (Hybrid): {method_name}",
+            f"{n_shown} communities (size ≥ {min_community_size} cells), {title}",
         ),
     )
 
@@ -549,7 +549,7 @@ def plot_community_geo_hybrid(
     if save:
         save_plotly(fig, f"community_geo_hybrid_{_slug(method_name)}_{_slug(title)}")
 
-    fig.show()
+    fig.show(renderer)
 
 
 # ====================================================================================
@@ -685,6 +685,59 @@ _NOLABELS_TILES = {
 }
 
 
+def _link_traces_mapbox(
+    H,
+    pos: dict,
+    weight: str = "weight",
+    top_frac: float | None = 0.1,
+    n_bins: int = 3,
+    base_color: tuple = (58, 67, 80),
+    alpha_range: tuple = (0.12, 0.45),
+    width_range: tuple = (0.4, 2.2),
+):
+    """
+    Weight-banded ``go.Scattermapbox`` line traces for a graph's edges, for
+    drawing the interaction links on a tile basemap. Edges are bucketed into
+    ``n_bins`` weight bands (Plotly mapbox takes one line width per trace);
+    ``top_frac`` keeps only the strongest fraction (the backbone). ``base_color``
+    (RGB), ``alpha_range`` and ``width_range`` set the min→max opacity / line
+    width across the bands – raise them for crisp links drawn *on top* of faded
+    markers. Shared by the interactive geo-edges map and the community/fault
+    overlay. Returns a list of ``go.Scattermapbox`` (possibly empty).
+    """
+    edges = [(u, v, float(d.get(weight, 1.0))) for u, v, d in H.edges(data=True)]
+    if not edges:
+        return []
+    basis = np.log1p(np.array([w for _, _, w in edges], dtype=float))
+    if top_frac is not None and 0.0 < top_frac < 1.0:
+        keep = basis >= np.quantile(basis, 1.0 - top_frac)
+        edges = [e for e, k in zip(edges, keep) if k]
+        basis = basis[keep]
+    if len(edges) == 0:
+        return []
+    order = np.argsort(basis)
+    r, g, b = base_color
+    a0, a1 = alpha_range
+    w0, w1 = width_range
+    traces = []
+    for b_i, bin_idx in enumerate(np.array_split(order, n_bins)):
+        if len(bin_idx) == 0:
+            continue
+        lons: list = []
+        lats: list = []
+        for j in bin_idx:
+            u, v, _ = edges[j]
+            lons += [pos[u][0], pos[v][0], None]
+            lats += [pos[u][1], pos[v][1], None]
+        frac = (b_i + 1) / n_bins
+        traces.append(go.Scattermapbox(
+            lon=lons, lat=lats, mode="lines",
+            line=dict(width=w0 + (w1 - w0) * frac, color=f"rgb({r},{g},{b})"),
+            opacity=a0 + (a1 - a0) * frac,
+            hoverinfo="skip", showlegend=False))
+    return traces
+
+
 def plot_communities_faults_overlay_hybrid(
     G: nx.Graph,
     community_map: Partition,
@@ -705,7 +758,16 @@ def plot_communities_faults_overlay_hybrid(
     fault_casing_color: str = "rgba(255,255,255,0.9)",
     marker_opacity: float = 0.75,
     size_max: int = 11,
+    draw_faults: bool = True,
+    draw_links: bool = False,
+    link_top_frac: float = 0.1,
+    link_weight: str = "weight",
+    links_on_top: bool = False,
+    link_color: tuple = (58, 67, 80),
+    link_alpha: tuple = (0.12, 0.45),
+    link_width: tuple = (0.4, 2.2),
     save: bool = True,
+    renderer: str | None = None,
 ) -> None:
     """
     Interactive overlay of detected communities and DISS faults on one map (A).
@@ -739,8 +801,33 @@ def plot_communities_faults_overlay_hybrid(
     with_iss : bool
         Also overlay Individual Seismogenic Sources. Off by default – at this
         zoom the ISS planes add clutter and the CSS outlines carry the structure.
+    draw_faults : bool
+        Draw the DISS fault traces. Set ``False`` for a links-only community map
+        on the same basemap (no faults).
+    draw_links : bool
+        Also draw the **interaction links** (top-``link_top_frac`` by weight,
+        beneath the markers). Combine with ``draw_faults`` for a communities +
+        faults + links map, or with ``draw_faults=False`` for links only.
+    link_top_frac : float
+        Fraction of strongest edges to draw as the link backbone.
+    link_weight : str
+        Edge-weight attribute key used to rank and scale the links.
+    links_on_top : bool
+        Draw the links *above* the markers instead of beneath. Pair with a low
+        ``marker_opacity`` and a crisp ``link_color``/``link_alpha`` to fade the
+        community field into context and make the backbone the focus.
+    link_color : tuple
+        Link RGB colour.
+    link_alpha, link_width : tuple
+        (min, max) opacity / line width across the weight bands.
+    renderer : str or None
+        Plotly renderer passed to ``fig.show``. ``None`` (default) shows the live
+        interactive WebGL map. Pass ``"png"`` (or ``"svg"`` / ``"pdf"``) to render a
+        **static image** instead, so repeated maps do not exhaust the browser's
+        WebGL context cap (older maps going blank).
     """
-    faults = load_diss_faults(diss_dir, italy_only=italy_only, with_iss=with_iss)
+    faults = load_diss_faults(diss_dir, italy_only=italy_only, with_iss=with_iss) \
+        if draw_faults else {}
 
     df = _community_points_df(G, community_map, min_community_size)
     if df.empty:
@@ -750,10 +837,13 @@ def plot_communities_faults_overlay_hybrid(
     df["size_val"] = np.log1p(df["strength"]).clip(lower=0.5)
 
     # Two-line title (main + smaller subtitle) so it never overflows the width.
-    title_text = (
-        f"Communities vs DISS faults: {method_name}"
-        f"<br><sup>{n_shown} communities (size ≥ {min_community_size} cells)"
-        f", {title}</sup>"
+    _what = ("Communities, faults & links" if (draw_faults and draw_links)
+             else "Communities vs DISS faults" if draw_faults
+             else "Community network links" if draw_links
+             else "Communities")
+    title_text = pres_title(
+        f"{_what}: {method_name}",
+        f"{n_shown} communities (size ≥ {min_community_size} cells), {title}",
     )
 
     # No-labels basemaps are raster tiles drawn under the traces; Plotly's own
@@ -773,26 +863,52 @@ def plot_communities_faults_overlay_hybrid(
     )
     fig.update_traces(marker=dict(opacity=marker_opacity))
 
+    # Interaction links. Beneath the markers by default (prepended so the cells
+    # stay on top); with ``links_on_top`` they are drawn above a faded marker
+    # field so the backbone is the focus. Faults (added below) stay on top of all.
+    link_traces = []
+    if draw_links:
+        shown = set(df["cell_id"])
+        H = G.subgraph(n for n in shown if n in G)
+        pos = {n: (G.nodes[n]["lon"], G.nodes[n]["lat"]) for n in H.nodes()}
+        link_traces = _link_traces_mapbox(
+            H, pos, weight=link_weight, top_frac=link_top_frac,
+            base_color=link_color, alpha_range=link_alpha, width_range=link_width)
+        if link_traces and not links_on_top:
+            for t in link_traces:
+                fig.add_trace(t)
+            # Reorder the just-added links to the front (a valid permutation of
+            # existing traces) so they render beneath the markers.
+            d = list(fig.data)
+            n_link = len(link_traces)
+            fig.data = tuple(d[-n_link:] + d[:-n_link])
+
     # Fault sources as line traces ON TOP of the markers (casing + dark core).
     # Each source layer gets one casing trace and one core trace so disjoint
     # segments share a single legend entry.
-    for key, core_w, case_w in (("css", 1.2, 3.0), ("iss", 0.9, 2.4)):
-        layer = faults.get(key)
-        if layer is None or layer.empty:
-            continue
-        lons, lats = _geom_to_lonlat_lines(layer)
-        if not lons:
-            continue
-        fig.add_trace(go.Scattermapbox(
-            lon=lons, lat=lats, mode="lines",
-            line=dict(color=fault_casing_color, width=case_w),
-            hoverinfo="skip", showlegend=False))
-        fig.add_trace(go.Scattermapbox(
-            lon=lons, lat=lats, mode="lines",
-            line=dict(color=fault_color, width=core_w),
-            name="DISS faults" if key == "css" else "DISS ISS",
-            hoverinfo="skip",
-            showlegend=(key == "css")))
+    if draw_faults:
+        for key, core_w, case_w in (("css", 1.2, 3.0), ("iss", 0.9, 2.4)):
+            layer = faults.get(key)
+            if layer is None or layer.empty:
+                continue
+            lons, lats = _geom_to_lonlat_lines(layer)
+            if not lons:
+                continue
+            fig.add_trace(go.Scattermapbox(
+                lon=lons, lat=lats, mode="lines",
+                line=dict(color=fault_casing_color, width=case_w),
+                hoverinfo="skip", showlegend=False))
+            fig.add_trace(go.Scattermapbox(
+                lon=lons, lat=lats, mode="lines",
+                line=dict(color=fault_color, width=core_w),
+                name="DISS faults" if key == "css" else "DISS ISS",
+                hoverinfo="skip",
+                showlegend=(key == "css")))
+
+    # Links drawn ON TOP of the (faded) markers, after faults so faults stay above.
+    if draw_links and links_on_top and link_traces:
+        for t in link_traces:
+            fig.add_trace(t)
 
     map_cfg = {"center": {"lat": center_lat, "lon": center_lon}, "zoom": zoom}
     if bounds is not None:
@@ -806,106 +922,191 @@ def plot_communities_faults_overlay_hybrid(
 
     fig.update_layout(mapbox=map_cfg,
                       margin={"r": 0, "t": 55, "l": 0, "b": 0},
-                      title=dict(font=dict(size=14), x=0.02, xanchor="left"),
+                      title=dict(x=0.02, xanchor="left"),
                       width=width, height=height, showlegend=True)
 
     if save:
-        save_plotly(fig, f"communities_vs_faults_overlay_{_slug(method_name)}_{_slug(title)}")
-    fig.show()
+        variant = ("_faults_links" if (draw_faults and draw_links)
+                   else "_links" if draw_links
+                   else "")
+        save_plotly(fig,
+                    f"communities_vs_faults_overlay{variant}_{_slug(method_name)}_{_slug(title)}")
+    fig.show(renderer)
 
 
-def plot_communities_faults_sidebyside_hybrid(
+def plot_network_overview_hybrid(
     G: nx.Graph,
-    community_map: Partition,
-    diss_dir,
+    diss_dir=None,
     title: str = "",
-    method_name: str = "",
+    center_lat: float = 41.9,
+    center_lon: float = 12.5,
+    zoom: float = 0,
     bounds: dict | None = None,
-    min_community_size: int = 10,
+    weight: str = "weight",
+    node_top_frac: float | None = 0.30,
+    link_top_frac: float = 0.02,
+    size_range: tuple = (5.0, 16.0),
+    link_color: tuple = (40, 45, 55),
+    link_alpha: tuple = (0.22, 0.62),
+    draw_faults: bool = False,
+    giant_only: bool = True,
+    clip_pct: tuple = (2.0, 98.0),
     italy_only: bool = True,
     with_iss: bool = False,
-    fault_color: str = "#1a1a1a",
-    fault_casing_color: str = "white",
-    figsize: tuple[float, float] = (15, 9),
+    basemap_style: str = "carto-positron-nolabels",
+    fault_color: str = "#222222",
+    fault_casing_color: str = "rgba(255,255,255,0.9)",
+    colorscale: str = "plasma",
+    height: int = 700,
+    width: int = 770,
     save: bool = True,
+    renderer: str | None = None,
 ) -> None:
     """
-    Static side-by-side figure: DISS faults (left) vs communities (right) (B).
+    Network **skeleton** overview (post-construction, pre-community-detection):
+    only the **strongest cells** (top ``node_top_frac`` by weighted strength) are
+    drawn, coloured by log₁₀(strength) on a sequential ``plasma`` scale and sized
+    by strength, with only the **strongest links** (top ``link_top_frac``) among
+    them as the interaction backbone, on the ``carto-positron-nolabels`` basemap.
+    Showing every one of the ~3 k cells turns the 20 km grid into a dense dot
+    field and the links into texture; thresholding to the strong hubs + a sparse
+    backbone makes the structure read as a network. The "establishing shot" of
+    what was built, before any partition colours the cells.
 
-    Left panel shows the DISS Composite Seismogenic Source outlines; right panel
-    shows the community cells coloured by community with the same fault outlines
-    drawn **on top** for direct comparison. Faults use an achromatic core with a
-    white casing (halo) so they never collide with a community colour and stay
-    legible over the markers. Italian regional boundaries (if present) provide an
-    offline geographic reference. All layers are in lon/lat (EPSG:4326).
+    Set ``draw_faults=True`` (and pass ``diss_dir``) to overlay the DISS
+    seismogenic sources; otherwise it is a faults-free structural overview.
 
     Parameters
     ----------
-    fault_color, fault_casing_color : str
-        Core and casing (halo) colours for the fault outlines.
-    with_iss : bool
-        Also draw Individual Seismogenic Sources. Off by default (clutter).
+    G : nx.Graph
+        Hybrid network with ``lon``/``lat`` node attributes and weighted edges.
+    node_top_frac : float or None
+        Keep only this fraction of the strongest cells (``0.30`` = top 30 %).
+        ``None`` keeps every cell (the dense-grid view).
+    link_top_frac : float
+        Fraction of the strongest edges *among the kept cells* drawn as the
+        backbone.
+    size_range : tuple
+        (min, max) marker size mapped onto log-strength.
+    link_color, link_alpha : tuple
+        Link RGB colour and (min, max) opacity across the weight bands.
+    draw_faults : bool
+        Overlay DISS faults (needs ``diss_dir``). Off by default.
+    giant_only : bool
+        Restrict to the largest (weakly-)connected component before thresholding.
+    clip_pct : tuple
+        (low, high) percentiles of log₁₀(strength) used as the colour limits.
+    colorscale : str
+        Sequential colourscale for log-strength (project convention: ``plasma``).
+    renderer : str or None
+        Plotly renderer passed to ``fig.show``. ``None`` (default) shows the live
+        interactive WebGL map. Pass ``"png"`` (or ``"svg"`` / ``"pdf"``) to render a
+        **static image** instead: static images do not hold a WebGL context, so the
+        same map can be shown repeatedly without older maps going blank when the
+        browser hits its WebGL context cap.
     """
-    import matplotlib.patheffects as pe
+    if giant_only and G.number_of_nodes():
+        comps = (nx.weakly_connected_components(G) if G.is_directed()
+                 else nx.connected_components(G))
+        G = G.subgraph(max(comps, key=len))
 
-    faults = load_diss_faults(diss_dir, italy_only=italy_only, with_iss=with_iss)
-
-    df = _community_points_df(G, community_map, min_community_size)
-    if df.empty:
-        print("No communities large enough to display.")
+    nodes = [n for n in G.nodes() if "lat" in G.nodes[n]]
+    if not nodes:
+        print("No georeferenced nodes to display.")
         return
 
-    comms = sorted(df["community"].unique())
-    cmap = plt.get_cmap("tab20")
-    color_for = {c: cmap(i % 20) for i, c in enumerate(comms)}
-    point_colors = df["community"].map(color_for)
+    strength = np.array([float(G.degree(n, weight=weight)) for n in nodes], dtype=float)
+    # keep only the strongest cells (the hubs) so the map is a skeleton, not a grid
+    if node_top_frac is not None and 0.0 < node_top_frac < 1.0:
+        thr = np.quantile(strength, 1.0 - node_top_frac)
+        keep = strength >= thr
+        nodes = [n for n, k in zip(nodes, keep) if k]
+        strength = strength[keep]
+    if not nodes:
+        print("No cells left after strength thresholding.")
+        return
 
-    css, iss, regions = faults.get("css"), faults.get("iss"), faults.get("regions")
+    log_s = np.log10(np.clip(strength, 1e-12, None))
+    finite = log_s[np.isfinite(log_s)]
+    cmin, cmax = (np.percentile(finite, clip_pct) if finite.size else (None, None))
+    s1 = np.log1p(strength)
+    lo, hi = float(s1.min()), float(s1.max())
+    norm = (s1 - lo) / (hi - lo) if hi > lo else np.full_like(s1, 0.5)
+    sizes = size_range[0] + (size_range[1] - size_range[0]) * norm
 
-    # white casing under a thin achromatic core → legible on any background
-    casing = [pe.Stroke(linewidth=3.0, foreground=fault_casing_color), pe.Normal()]
+    lon = np.array([G.nodes[n]["lon"] for n in nodes], dtype=float)
+    lat = np.array([G.nodes[n]["lat"] for n in nodes], dtype=float)
 
-    fig, (axL, axR) = plt.subplots(1, 2, figsize=figsize, sharex=True, sharey=True)
+    raster_url = _NOLABELS_TILES.get(basemap_style)
+    px_style = "white-bg" if raster_url else basemap_style
 
-    for ax in (axL, axR):
-        if regions is not None and not regions.empty:
-            regions.plot(ax=ax, facecolor="none", edgecolor="#cfd8dc",
-                         linewidth=0.5, zorder=0)
+    fig = go.Figure()
 
-    # Left – DISS fault outlines (achromatic core + casing)
-    if css is not None and not css.empty:
-        css.boundary.plot(ax=axL, color=fault_color, linewidth=1.0,
-                          path_effects=casing, zorder=2)
-    if iss is not None and not iss.empty:
-        iss.boundary.plot(ax=axL, color=fault_color, linewidth=0.6,
-                          alpha=0.7, zorder=3)
-    axL.set_title("DISS 3.3.1 seismogenic sources", fontsize=12)
+    # backbone links (strongest among the kept hubs) beneath the nodes
+    pos = {n: (G.nodes[n]["lon"], G.nodes[n]["lat"]) for n in nodes}
+    H = G.subgraph(nodes)
+    for t in _link_traces_mapbox(H, pos, weight=weight, top_frac=link_top_frac,
+                                 base_color=link_color, alpha_range=link_alpha):
+        fig.add_trace(t)
 
-    # Right – communities with fault outlines ON TOP (casing keeps them readable)
-    axR.scatter(df["lon"], df["lat"], c=list(point_colors), s=18,
-                alpha=0.85, edgecolors="none", zorder=2)
-    if css is not None and not css.empty:
-        css.boundary.plot(ax=axR, color=fault_color, linewidth=0.9,
-                          path_effects=casing, zorder=3)
-    axR.set_title(f"Network communities: {method_name} "
-                  f"({len(comms)} with size ≥ {min_community_size})", fontsize=12)
+    # hub nodes coloured by log10(strength)
+    fig.add_trace(go.Scattermapbox(
+        lon=lon, lat=lat, mode="markers",
+        marker=dict(size=sizes, color=log_s, colorscale=colorscale,
+                    cmin=cmin, cmax=cmax, opacity=0.9,
+                    colorbar=dict(title="log₁₀(strength)")),
+        text=[f"cell {n}<br>strength {s:.3e}" for n, s in zip(nodes, strength)],
+        hoverinfo="text", showlegend=False,
+    ))
 
+    # optional DISS faults on top (casing + dark core)
+    if draw_faults and diss_dir is not None:
+        faults = load_diss_faults(diss_dir, italy_only=italy_only, with_iss=with_iss)
+        for key, core_w, case_w in (("css", 1.2, 3.0), ("iss", 0.9, 2.4)):
+            layer = faults.get(key)
+            if layer is None or layer.empty:
+                continue
+            lons, lats = _geom_to_lonlat_lines(layer)
+            if not lons:
+                continue
+            fig.add_trace(go.Scattermapbox(
+                lon=lons, lat=lats, mode="lines",
+                line=dict(color=fault_casing_color, width=case_w),
+                hoverinfo="skip", showlegend=False))
+            fig.add_trace(go.Scattermapbox(
+                lon=lons, lat=lats, mode="lines",
+                line=dict(color=fault_color, width=core_w),
+                name="DISS faults" if key == "css" else "DISS ISS",
+                hoverinfo="skip", showlegend=(key == "css")))
+
+    pct = int(round(link_top_frac * 100))
+    _what = "Network overview + DISS faults" if draw_faults else "Network overview"
+    title_text = pres_title(
+        f"{_what}: {title}",
+        f"all {len(nodes):,} cells, colour = log₁₀(weighted strength), "
+        f"top-{pct}% strongest links",
+    )
+
+    map_cfg = {"style": px_style,
+               "center": {"lat": center_lat, "lon": center_lon}, "zoom": zoom}
     if bounds is not None:
-        axL.set_xlim(bounds["west"], bounds["east"])
-        axL.set_ylim(bounds["south"], bounds["north"])
-    # geographic aspect ratio (Mercator-like) at central latitude
-    lat0 = np.radians((axL.get_ylim()[0] + axL.get_ylim()[1]) / 2)
-    for ax in (axL, axR):
-        ax.set_aspect(1.0 / np.cos(lat0))
-        ax.set_axis_off()
+        map_cfg["bounds"] = bounds
+    if raster_url:
+        map_cfg["layers"] = [{
+            "below": "traces", "sourcetype": "raster",
+            "source": [raster_url],
+            "sourceattribution": "© CARTO © OpenStreetMap contributors",
+        }]
 
-    fig.suptitle(f"Communities vs faults: {title}", fontsize=14, y=0.98)
-    fig.tight_layout()
+    fig.update_layout(mapbox=map_cfg,
+                      margin={"r": 0, "t": 55, "l": 0, "b": 0},
+                      title=dict(text=title_text, x=0.02, xanchor="left"),
+                      width=width, height=height, showlegend=draw_faults)
 
     if save:
-        savefig(f"communities_vs_faults_sidebyside_{_slug(method_name)}_{_slug(title)}")
-    plt.show()
-
+        variant = "_faults" if draw_faults else ""
+        save_plotly(fig, f"network_overview{variant}_{_slug(title)}")
+    fig.show(renderer)
 
 
 # ====================================================================================
@@ -913,8 +1114,6 @@ def plot_communities_faults_sidebyside_hybrid(
 # ──────────────────────────────── NMI ────────────────────────────────────────────────
 
 # ====================================================================================
-
-
 
 
 def align_partitions(part1: dict, part2: dict):
@@ -929,12 +1128,9 @@ def align_partitions(part1: dict, part2: dict):
     return labels1, labels2
 
 
-
 def compute_nmi(part1: dict, part2: dict) -> float:
     labels1, labels2 = align_partitions(part1, part2)
     return normalized_mutual_info_score(labels1, labels2)
-
-
 
 
 def compute_nmi_matrix(partitions: dict) -> pd.DataFrame:
@@ -956,7 +1152,6 @@ def compute_nmi_matrix(partitions: dict) -> pd.DataFrame:
     return pd.DataFrame(mat, index=methods, columns=methods)
 
 
-
 def plot_nmi_heatmap(nmi_df: pd.DataFrame):
     plt.figure(figsize=(7, 6))
 
@@ -971,7 +1166,7 @@ def plot_nmi_heatmap(nmi_df: pd.DataFrame):
         linewidths=0.5
     )
 
-    plt.title("NMI between Community Detection Methods")
+    plt.title("NMI between community methods")
     plt.tight_layout()
     plt.show()
 
@@ -1150,14 +1345,139 @@ def plot_partition_quality_hybrid(
     for ax, (col, lab) in zip(axes, measures):
         ax.bar(x, quality_df[col].to_numpy(), color="#5c6bc0")
         ax.set_xticks(x)
-        ax.set_xticklabels(quality_df.index, rotation=30, ha="right", fontsize=8)
-        ax.set_title(lab, fontsize=11)
+        ax.set_xticklabels(quality_df.index, rotation=30, ha="right")
+        ax.set_title(lab)
         ax.grid(axis="y", alpha=0.3)
-    fig.suptitle(f"Community-detection quality: {title}", fontsize=13)
+    fig.suptitle(f"Community-detection quality: {title}")
     fig.tight_layout()
     if save:
         savefig(f"partition_quality_4measures_{_slug(title)}")
     plt.show()
+
+
+# ====================================================================================
+# Network layout: topology coloured by community (and topology-vs-geography)
+# ====================================================================================
+
+
+# ------------------------------------------------------------------------------------
+# Interactive (Plotly) network layouts – zoom / pan / hover
+# ------------------------------------------------------------------------------------
+
+
+def plot_geo_edges_interactive_hybrid(
+    G: nx.Graph,
+    partition: Partition,
+    title: str = "",
+    method_name: str = "",
+    min_community_size: int = 10,
+    weight: str = "weight",
+    top_frac: float = 0.1,
+    bbox: tuple | None = None,
+    focus_community: int | None = None,
+    height: int = 820,
+    width: int = 900,
+    save: bool = True,
+    renderer: str | None = None,
+) -> None:
+    """
+    Interactive geographic network: the strongest links drawn on the project's
+    standard **``carto-positron`` tile basemap** (``go.Scattermapbox``), so it
+    matches the community/fault maps; nodes coloured by community and sized by
+    weighted degree, links as line traces beneath them. Zoom, pan and hover for
+    the cell behind every point; kaleido exports JPG+PDF (the tile basemap
+    rasterises fine here). Plotly counterpart of :func:`plot_geo_edges_hybrid`.
+
+    ``top_frac`` controls edge density; ``bbox`` (``(lon_min, lon_max, lat_min,
+    lat_max)``) or ``focus_community`` zoom into an area / a single community so
+    the individual aftershock-chain links become readable.
+
+    Pass ``renderer="png"`` (or ``"svg"`` / ``"pdf"``) to render a static image
+    instead of the live figure (avoids exhausting the browser WebGL context cap).
+    """
+    nodes = [n for n in G.nodes() if n in partition and "lat" in G.nodes[n]]
+    counts = pd.Series([partition[n] for n in nodes]).value_counts()
+    keep_comms = set(counts[counts >= min_community_size].index)
+    sel = [n for n in nodes if partition[n] in keep_comms]
+    if focus_community is not None:
+        sel = [n for n in sel if partition[n] == focus_community]
+    if bbox is not None:
+        lon_min, lon_max, lat_min, lat_max = bbox
+        sel = [n for n in sel
+               if lon_min <= G.nodes[n]["lon"] <= lon_max
+               and lat_min <= G.nodes[n]["lat"] <= lat_max]
+    if len(sel) == 0:
+        print("No nodes left to display after filtering.")
+        return
+
+    H = G.subgraph(sel)
+    pos = {n: (G.nodes[n]["lon"], G.nodes[n]["lat"]) for n in sel}
+
+    fig = go.Figure()
+
+    # weight-banded edge line traces (Scattermapbox), drawn beneath the nodes
+    for t in _link_traces_mapbox(H, pos, weight=weight, top_frac=top_frac):
+        fig.add_trace(t)
+
+    # node marker traces, one per community (mapbox markers take no outline)
+    comms = sorted({partition[n] for n in sel})
+    strength = {n: float(H.degree(n, weight=weight)) for n in sel}
+    smax = max(strength.values()) if strength else 1.0
+    smax = smax if smax > 0 else 1.0
+    for ci, c in enumerate(comms):
+        cn = [n for n in sel if partition[n] == c]
+        fig.add_trace(go.Scattermapbox(
+            lon=[pos[n][0] for n in cn],
+            lat=[pos[n][1] for n in cn],
+            mode="markers",
+            name=f"C{c}",
+            marker=dict(
+                size=[7 + 20 * (strength[n] / smax) for n in cn],
+                color=_PALETTE[ci % len(_PALETTE)],
+                opacity=0.85,
+            ),
+            text=[f"cell {n}<br>community {c}<br>weighted degree {strength[n]:.3g}"
+                  for n in cn],
+            hoverinfo="text",
+        ))
+
+    lons_all = np.array([pos[n][0] for n in sel], dtype=float)
+    lats_all = np.array([pos[n][1] for n in sel], dtype=float)
+    if bbox is not None:
+        # Frame the box with breathing room (node *selection* stays the box;
+        # only the *view* is padded) so it is not framed too tightly.
+        padx = 0.40 * (bbox[1] - bbox[0])
+        pady = 0.40 * (bbox[3] - bbox[2])
+        west, east = bbox[0] - padx, bbox[1] + padx
+        south, north = bbox[2] - pady, bbox[3] + pady
+    else:
+        padx = 0.15 * (float(np.ptp(lons_all)) or 1.0)
+        pady = 0.15 * (float(np.ptp(lats_all)) or 1.0)
+        west, east = lons_all.min() - padx, lons_all.max() + padx
+        south, north = lats_all.min() - pady, lats_all.max() + pady
+
+    scope = (f"community {focus_community}" if focus_community is not None
+             else "selected area" if bbox is not None else "full network")
+    pct = int(round(top_frac * 100))
+    fig.update_layout(
+        title=pres_title(
+            f"Geographic network, {method_name}: {title}",
+            f"top-{pct}% strongest links, {scope}; colour = community, size = weighted degree"),
+        mapbox=dict(
+            style="carto-positron",
+            center=dict(lat=0.5 * (south + north), lon=0.5 * (west + east)),
+            zoom=0,
+            bounds=dict(west=west, east=east, south=south, north=north),
+        ),
+        width=width, height=height,
+        legend=dict(title="Community", itemsizing="constant"),
+        margin=dict(l=10, r=10, t=80, b=10),
+    )
+    if save:
+        tag = (f"_c{focus_community}" if focus_community is not None
+               else "_bbox" if bbox is not None else "")
+        save_plotly(fig, f"geo_edges_int_{_slug(method_name)}_{_slug(title)}{tag}")
+    fig.show(renderer)
 
 
 # ====================================================================================
@@ -1407,3 +1727,220 @@ def run_mmsbm_custom_hybrid(
         log.info("MMSB-EM done: %d unique argmax blocks (of K=%d possible)",
                  len(set(hard_partition.values())), K)
     return pi, hard_partition
+
+
+# ==============================================================================
+# Temporal modularity evolution (sliding-window Q around a main shock)
+# ==============================================================================
+def build_window_network_hybrid(
+    df: pd.DataFrame,
+    start_time: pd.Timestamp,
+    end_time: pd.Timestamp,
+    cell_size_km: float,
+    target_crs: str = "epsg:32632",
+    alpha: float = 0.7,
+    tau_days: float = 1.0,
+    r0: float = 20.0,
+    spatial_threshold_km: float = 300.0,
+    time_threshold_sec: float = 72 * 3600,
+) -> nx.DiGraph:
+    """
+    Build the hybrid Abe-Suzuki network for the events in a single time window.
+
+    The catalog is sliced to ``start_time <= time < end_time`` and passed to
+    :func:`src.network_custom.build_abe_suzuki_network_custom_hybrid` with the
+    given decay/threshold parameters. Used by :func:`compute_q_over_time_hybrid`
+    to rebuild the network for each sliding window.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Full catalog with a tz-aware ``time`` column (plus the columns the
+        builder needs: ``latitude``, ``longitude``, ``depth_km``, ``magnitude``).
+    start_time, end_time : pd.Timestamp
+        Half-open window ``[start_time, end_time)``.
+    cell_size_km : float
+        Cubic cell side (km) for spatial discretisation.
+    target_crs : str
+        Projected CRS for distance computation (default ``epsg:32632``, Italy).
+    alpha, tau_days, r0 : float
+        Hybrid weighting parameters (magnitude exponent, temporal decay in days,
+        spatial decay in km).
+    spatial_threshold_km, time_threshold_sec : float
+        Hard filters on the distance / elapsed time between consecutive events.
+
+    Returns
+    -------
+    nx.DiGraph
+        The windowed hybrid network (possibly empty if the slice is too small).
+    """
+    df_win = df[(df["time"] >= start_time) & (df["time"] < end_time)]
+    return build_abe_suzuki_network_custom_hybrid(
+        df_win,
+        cell_size_km=cell_size_km,
+        spatial_threshold_km=spatial_threshold_km,
+        time_threshold_sec=time_threshold_sec,
+        target_crs=target_crs,
+        alpha=alpha,
+        tau=tau_days * 86400.0,
+        r0=r0,
+        info=False,
+    )
+
+
+def compute_modularity_from_partition(
+    G: nx.Graph,
+    partition: Partition,
+    weight: str | None = "weight",
+    resolution: float = 1.0,
+) -> float:
+    """
+    Newman modularity Q of a ``{node: community}`` partition.
+
+    The graph is projected to a simple undirected graph (self-loops removed)
+    before scoring, matching how :func:`run_louvain_hybrid` defines its
+    partition. Nodes missing from ``partition`` are dropped.
+
+    Parameters
+    ----------
+    G : nx.Graph or nx.DiGraph
+        Network whose modularity is measured.
+    partition : dict
+        ``{node: community_id}`` mapping (e.g. the output of
+        :func:`run_louvain_hybrid`).
+    weight : str or None
+        Edge-data key for weighted modularity, or ``None`` for the unweighted
+        count. Default ``"weight"``.
+    resolution : float
+        Resolution parameter γ of the (generalised) modularity. ``1.0`` is the
+        classic Newman-Girvan definition.
+
+    Returns
+    -------
+    float
+        Modularity Q, or ``nan`` if the graph has no edges.
+    """
+    from collections import defaultdict
+
+    G_und = G.to_undirected()
+    G_und.remove_edges_from(nx.selfloop_edges(G_und))
+    if G_und.number_of_edges() == 0:
+        return float("nan")
+
+    groups: dict[int, set] = defaultdict(set)
+    for node in G_und.nodes():
+        if node in partition:
+            groups[partition[node]].add(node)
+    communities = list(groups.values())
+    if not communities:
+        return float("nan")
+
+    return nx.algorithms.community.modularity(
+        G_und, communities, weight=weight, resolution=resolution
+    )
+
+
+def compute_q_over_time_hybrid(
+    df: pd.DataFrame,
+    window_days: float,
+    step_days: float,
+    cell_size_km: float,
+    start_time: pd.Timestamp,
+    end_time: pd.Timestamp,
+    alpha: float = 0.7,
+    r0: float = 20.0,
+    tau_days: float = 1.0,
+    resolution: float = 1.0,
+    target_crs: str = "epsg:32632",
+    spatial_threshold_km: float = 300.0,
+    time_threshold_sec: float = 72 * 3600,
+    seed: int = 42,
+    min_edges: int = 1,
+) -> pd.DataFrame:
+    """
+    Sliding-window modularity Q(t) of the hybrid earthquake network.
+
+    A window of width ``window_days`` is slid in ``step_days`` increments across
+    ``[start_time, end_time)``. For each position the hybrid network is rebuilt
+    from the events inside the window (:func:`build_window_network_hybrid`),
+    partitioned with Louvain (:func:`run_louvain_hybrid`, Reichardt-Bornholdt at
+    the given ``resolution``), and its modularity scored
+    (:func:`compute_modularity_from_partition`). Following Abe & Suzuki, a sharp
+    drop in Q marks the temporary collapse of community structure at a main shock.
+
+    Each row is stamped with the **window centre** time, so a drop aligned with a
+    main shock appears at ``t_relative ≈ 0`` when plotted against the event time.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Full catalog with a tz-aware ``time`` column.
+    window_days : float
+        Width of the sliding window (days).
+    step_days : float
+        Step between consecutive window starts (days).
+    cell_size_km : float
+        Cubic cell side (km).
+    start_time, end_time : pd.Timestamp
+        Range scanned; the last window is the one whose end does not exceed
+        ``end_time``.
+    alpha, r0, tau_days : float
+        Hybrid weighting parameters passed to the per-window builder.
+    resolution : float
+        Louvain resolution γ (also used for the modularity score).
+    target_crs : str
+        Projected CRS (default ``epsg:32632``, Italy).
+    spatial_threshold_km, time_threshold_sec : float
+        Hard filters for the per-window builder.
+    seed : int
+        Louvain RNG seed.
+    min_edges : int
+        Windows with fewer than this many edges get ``Q = nan`` (too sparse to
+        partition meaningfully).
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns ``time`` (window centre, tz-aware), ``Q``, ``n_events``,
+        ``n_nodes``, ``n_edges``, sorted by ``time``.
+    """
+    window = pd.Timedelta(days=window_days)
+    step = pd.Timedelta(days=step_days)
+    half = window / 2
+
+    rows = []
+    t0 = start_time
+    while t0 + window <= end_time:
+        t1 = t0 + window
+        df_win = df[(df["time"] >= t0) & (df["time"] < t1)]
+        n_events = len(df_win)
+
+        G_win = build_window_network_hybrid(
+            df, start_time=t0, end_time=t1, cell_size_km=cell_size_km,
+            target_crs=target_crs, alpha=alpha, tau_days=tau_days, r0=r0,
+            spatial_threshold_km=spatial_threshold_km,
+            time_threshold_sec=time_threshold_sec,
+        )
+        n_nodes = G_win.number_of_nodes()
+        n_edges = G_win.number_of_edges()
+
+        if n_edges >= min_edges:
+            part = run_louvain_hybrid(G_win, seed=seed, resolution=resolution)
+            Q = compute_modularity_from_partition(
+                G_win, part, weight="weight", resolution=resolution
+            )
+        else:
+            Q = float("nan")
+
+        rows.append({
+            "time": t0 + half,
+            "Q": Q,
+            "n_events": n_events,
+            "n_nodes": n_nodes,
+            "n_edges": n_edges,
+        })
+        t0 = t0 + step
+
+    log.info("compute_q_over_time_hybrid: %d windows (width=%.0fd, step=%.0fd)",
+             len(rows), window_days, step_days)
+    return pd.DataFrame(rows).sort_values("time").reset_index(drop=True)

@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 
-from src.plotutils import save_plotly, _slug
+from src.plotutils import save_plotly, _slug, pres_title
 
 log = logging.getLogger(__name__)
 
@@ -161,6 +161,7 @@ def plot_sequence_community_geo(
     width: int = 770,
     save: bool = True,
     save_name: str | None = None,
+    renderer: str | None = None,
 ) -> None:
     """
     Map one sequence's events, coloured by their detected community.
@@ -168,6 +169,9 @@ def plot_sequence_community_geo(
     If every point shares a colour the sequence maps to a single community
     (clean recovery); a mix of colours means the partition split the sequence.
     The view auto-centres on the sequence's events unless overridden.
+
+    Pass ``renderer="png"`` (or ``"svg"`` / ``"pdf"``) to render a static image
+    instead of the live figure (avoids exhausting the browser WebGL context cap).
     """
     g = df_labeled[df_labeled[seq_col] == sequence_name].copy()
     g["community"] = g[cell_col].map(community_map)
@@ -190,7 +194,10 @@ def plot_sequence_community_geo(
         color_discrete_sequence=px.colors.qualitative.Bold,
         map_style="carto-positron",
         hover_data={"magnitude": True, "time_str": True},
-        title=f"{sequence_name} events by community – {method_name} – {title}",
+        title=pres_title(
+            f"{sequence_name}: events by community",
+            f"{method_name} – {title}",
+        ),
     )
     fig.update_traces(marker=dict(size=7, opacity=0.75))
     fig.update_layout(
@@ -200,4 +207,4 @@ def plot_sequence_community_geo(
     )
     if save:
         save_plotly(fig, save_name or f"seq_{_slug(sequence_name)}_{_slug(method_name)}")
-    fig.show()
+    fig.show(renderer)

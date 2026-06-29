@@ -196,7 +196,7 @@ def fit_intrinsic_slope(df_binned: pd.DataFrame, k_str: float) -> tuple[float, f
 
 
 
-def run_binned_randomization_test_hybrid(
+def analyze_assortativity_with_randomization_hybrid(
     G: nx.DiGraph,
     gamma: float,
     num_bins: int = 15,
