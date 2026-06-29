@@ -48,7 +48,7 @@ def analyze_degree_distribution(
 
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_title(f"Degree Distribution: {title}")
+    ax.set_title(f"Degree Distribution: {title}" if title else "Degree Distribution")
     ax.set_xlabel("Degree $k$")
     ax.set_ylabel("Probability $P(k)$")
 
@@ -175,7 +175,7 @@ def analyze_degree_distribution_log_binning(
     ax.set_xscale("log")
     ax.set_yscale("log")
 
-    ax.set_title(f"Degree Distribution (Log-Binning): {title}")
+    ax.set_title(f"Degree Distribution (Log-Binning): {title}" if title else "Degree Distribution (Log-Binning)")
     ax.set_xlabel("Degree $k$")
     ax.set_ylabel("Probability Density $P(k)$")
 

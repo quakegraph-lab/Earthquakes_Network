@@ -155,7 +155,7 @@ def plot_robustness_curves(
 
     ax.set_xlabel("Fraction of nodes removed", fontsize=12)
     ax.set_ylabel("GCC size / original N", fontsize=12)
-    ax.set_title(f"Network Robustness: {title}", fontsize=13)
+    ax.set_title(f"Network Robustness: {title}" if title else "Network Robustness", fontsize=13)
     ax.legend(fontsize=10, loc="upper right")
     ax.grid(True, linestyle="--", alpha=0.35)
     ax.set_xlim(0, 1)

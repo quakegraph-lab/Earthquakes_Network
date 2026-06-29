@@ -116,7 +116,7 @@ def analyze_degree_correlations_hybrid(
     plt.yscale("log")
     plt.xlabel(deg_label)
     plt.ylabel("k_nn(k)")
-    plt.title("Assortativity Analysis (Hybrid Network)")
+    plt.title("Assortativity Analysis")
     plt.legend()
     plt.grid(True, which="both", ls="--", alpha=0.3)
 

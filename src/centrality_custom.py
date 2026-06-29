@@ -17,11 +17,6 @@ Degree       – number of interacting neighbours (unweighted degree),
 PageRank     – stationary flow of seismic influence through the network,
                identifying persistent "stress sinks" (in-flow / authority side).
 
-CheiRank     – PageRank on the transposed network (A^T, i.e. G.reverse()),
-               identifying persistent "stress sources" (out-flow / hub side).
-               Same algorithm as PageRank; the PageRank–CheiRank pair forms a
-               2D ranking of a directed network (Zhirov et al. 2010).
-
 Closeness    – how quickly a cell can be reached by all others via shortest
                paths (in-closeness), proxy for global accessibility as a sink.
 
@@ -33,7 +28,7 @@ topology). Edge weight here is an interaction *strength* (high = strong link),
 not a distance, so feeding it to a shortest-path algorithm would invert its
 meaning (it would treat strong links as long detours). A correct weighted
 variant would require distance = 1/weight; we keep the unweighted topology
-instead. PageRank and CheiRank do use the weights (degree is the unweighted count).
+instead. PageRank does use the weights (degree is the unweighted count).
 
 Clustering   – local density of weighted interactions,
                identifies coherent seismic neighborhoods / fault junctions.
@@ -58,7 +53,6 @@ log = logging.getLogger(__name__)
 _METRICS = [
     "Degree",
     "PageRank",
-    "CheiRank",
     "Closeness",
     "Betweenness",
     "Clustering",
@@ -66,7 +60,6 @@ _METRICS = [
 _LABELS = {
     "Degree":        "Degree",
     "PageRank":      "PageRank\n(stress sinks)",
-    "CheiRank":      "CheiRank\n(stress sources)",
     "Closeness":     "Closeness in",
     "Betweenness":   "Betweenness",
     "Clustering":    "Clustering",
@@ -74,7 +67,7 @@ _LABELS = {
 
 
 _DEFAULT_MEASURES = frozenset({
-    "Degree", "PageRank", "CheiRank",
+    "Degree", "PageRank",
     "Closeness", "Betweenness", "Clustering",
 })
 
@@ -99,12 +92,6 @@ def compute_all_centralities_hybrid(
     G_und = G.to_undirected()
     G_und.remove_edges_from(nx.selfloop_edges(G_und))
 
-    # --- Transposed network (A^T) for out-flow / source-side measures ---
-    # G.reverse() flips every edge i->j into j->i; its adjacency is A^T.
-    # Built once and shared by CheiRank.
-    if _req & {"CheiRank"}:
-        G_rev = G.reverse(copy=False)
-
     # --- 1. Degree (unweighted) ---
     if "Degree" in _req:
         log.info("Degree...")
@@ -117,13 +104,6 @@ def compute_all_centralities_hybrid(
         log.info("PageRank...")
         t0 = time.time()
         pr_cent = nx.pagerank(G, weight="weight")
-        log.info("  %.1fs", time.time() - t0)
-
-    # --- 2b. CheiRank = PageRank on the transposed network (out-flow / source) ---
-    if "CheiRank" in _req:
-        log.info("CheiRank (PageRank on A^T)...")
-        t0 = time.time()
-        chei_cent = nx.pagerank(G_rev, weight="weight")
         log.info("  %.1fs", time.time() - t0)
 
     # --- 3. Closeness, unweighted topology (in-closeness / accessibility as sink) ---
@@ -169,9 +149,6 @@ def compute_all_centralities_hybrid(
         if "PageRank" in _req:
             row["PageRank"] = pr_cent.get(node, 0.0)
 
-        if "CheiRank" in _req:
-            row["CheiRank"] = chei_cent.get(node, 0.0)
-
         if "Closeness" in _req:
             row["Closeness"] = close_cent.get(node, 0.0)
 
@@ -191,7 +168,6 @@ def compute_all_centralities_hybrid(
     )
 
     return df
-
 
 
 def plot_centrality_correlation_hybrid(
@@ -257,95 +233,6 @@ def plot_centrality_correlation_hybrid(
     if save:
         savefig(f"centrality_correlation_hybrid_{_slug(title)}")
 
-    plt.show()
-
-
-
-
-
-
-
-def plot_pagerank_cheirank_2d(
-    df: pd.DataFrame,
-    title: str = "",
-    top_n_labels: int = 6,
-    save: bool = True,
-) -> None:
-    """
-    2D PageRank–CheiRank ranking plot for a directed network.
-
-    Each cell is placed by its PageRank (in-flow / sink importance, x-axis)
-    and CheiRank (out-flow / source importance, y-axis), both on log scales.
-    The diagonal P = C marks flow balance; points are coloured by the
-    asymmetry log10(PageRank / CheiRank): red = net sink (receives more
-    influence than it emits), blue = net source. This is the standard 2D
-    directed-network ranking of Zhirov, Zhirov & Shepelyansky (2010).
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Must contain ``PageRank`` and ``CheiRank`` columns (and ``cell_id``
-        for labelling the most asymmetric cells).
-    title : str
-        Plot title suffix.
-    top_n_labels : int
-        Number of most sink-biased and most source-biased cells to annotate.
-    save : bool
-        Save the figure via ``savefig`` before showing.
-    """
-    if not {"PageRank", "CheiRank"} <= set(df.columns):
-        print("Need both PageRank and CheiRank columns for the 2D plot.")
-        return
-
-    d = df[(df["PageRank"] > 0) & (df["CheiRank"] > 0)].copy()
-    if d.empty:
-        print("No cells with positive PageRank and CheiRank.")
-        return
-
-    d["asymmetry"] = np.log10(d["PageRank"] / d["CheiRank"])
-    vmax = float(np.abs(d["asymmetry"]).quantile(0.98)) or 1.0
-
-    fig, ax = plt.subplots(figsize=(8, 7))
-    sc = ax.scatter(
-        d["PageRank"], d["CheiRank"],
-        c=d["asymmetry"], cmap="RdBu_r",
-        vmin=-vmax, vmax=vmax,
-        s=22, alpha=0.8, edgecolors="none",
-    )
-
-    # diagonal P = C (perfect sink/source balance)
-    lo = min(d["PageRank"].min(), d["CheiRank"].min())
-    hi = max(d["PageRank"].max(), d["CheiRank"].max())
-    ax.plot([lo, hi], [lo, hi], ls="--", color="grey", lw=1, zorder=0,
-            label="PageRank = CheiRank (balanced)")
-
-    # annotate most asymmetric cells on both sides
-    if "cell_id" in d.columns and top_n_labels > 0:
-        extremes = pd.concat([
-            d.nlargest(top_n_labels, "asymmetry"),   # net sinks
-            d.nsmallest(top_n_labels, "asymmetry"),  # net sources
-        ])
-        for _, r in extremes.iterrows():
-            ax.annotate(str(r["cell_id"]), (r["PageRank"], r["CheiRank"]),
-                        fontsize=10, alpha=0.7,
-                        xytext=(3, 3), textcoords="offset points")
-
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.set_xlabel("PageRank  (in-flow / stress sink)")
-    ax.set_ylabel("CheiRank  (out-flow / stress source)")
-    ax.set_title(f"PageRank–CheiRank 2D ranking: {title}", pad=12)
-    ax.legend(loc="lower right")
-
-    cbar = fig.colorbar(sc, ax=ax, label=r"$\log_{10}(\mathrm{PageRank}/\mathrm{CheiRank})$")
-    cbar.ax.text(0.5, 1.02, "sink", transform=cbar.ax.transAxes,
-                 ha="center", va="bottom", fontsize=12)
-    cbar.ax.text(0.5, -0.02, "source", transform=cbar.ax.transAxes,
-                 ha="center", va="top", fontsize=12)
-
-    plt.tight_layout()
-    if save:
-        savefig(f"pagerank_cheirank_2d_hybrid_{_slug(title)}")
     plt.show()
 
 
@@ -479,7 +366,7 @@ def plot_geo_top_n_interactive_hybrid(
         width=width,
         height=height,
         title=pres_title(
-            f"Top {top_n} central cells – {title}",
+            f"Top {top_n} central cells – {title}" if title else f"Top {top_n} central cells",
             "ranked by hybrid weighted centrality (dropdown = metric)"),
         legend_title="Metric",
     )
@@ -488,12 +375,6 @@ def plot_geo_top_n_interactive_hybrid(
         save_plotly(fig, f"centrality_geo_top_n_hybrid_{_slug(title)}")
 
     fig.show(renderer)
-
-
-
-
-
-
 
 
 def plot_geo_centrality_overlap_hybrid(
@@ -576,7 +457,7 @@ def plot_geo_centrality_overlap_hybrid(
         },
         mapbox_style="carto-positron",
         title=pres_title(
-            f"Centrality convergence: top-{top_n} overlap – {title}",
+            f"Centrality convergence: top-{top_n} overlap – {title}" if title else f"Centrality convergence: top-{top_n} overlap",
             "cells appearing in multiple centrality top-N lists"),
     )
 

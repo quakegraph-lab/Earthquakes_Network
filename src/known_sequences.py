@@ -196,7 +196,7 @@ def plot_sequence_community_geo(
         hover_data={"magnitude": True, "time_str": True},
         title=pres_title(
             f"{sequence_name}: events by community",
-            f"{method_name} – {title}",
+            f"{method_name} – {title}" if title else method_name,
         ),
     )
     fig.update_traces(marker=dict(size=7, opacity=0.75))

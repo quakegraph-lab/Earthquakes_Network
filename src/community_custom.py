@@ -523,8 +523,9 @@ def plot_community_geo_hybrid(
         },
         mapbox_style="carto-positron",
         title=pres_title(
-            f"Seismic Communities (Hybrid): {method_name}",
-            f"{n_shown} communities (size ≥ {min_community_size} cells), {title}",
+            f"Seismic Communities: {method_name}",
+            f"{n_shown} communities (size ≥ {min_community_size} cells), {title}"
+            if title else f"{n_shown} communities (size ≥ {min_community_size} cells)",
         ),
     )
 
@@ -843,7 +844,8 @@ def plot_communities_faults_overlay_hybrid(
              else "Communities")
     title_text = pres_title(
         f"{_what}: {method_name}",
-        f"{n_shown} communities (size ≥ {min_community_size} cells), {title}",
+        f"{n_shown} communities (size ≥ {min_community_size} cells), {title}"
+        if title else f"{n_shown} communities (size ≥ {min_community_size} cells)",
     )
 
     # No-labels basemaps are raster tiles drawn under the traces; Plotly's own
@@ -922,7 +924,7 @@ def plot_communities_faults_overlay_hybrid(
 
     fig.update_layout(mapbox=map_cfg,
                       margin={"r": 0, "t": 55, "l": 0, "b": 0},
-                      title=dict(x=0.02, xanchor="left"),
+                      title=dict(x=0.45, xanchor="center"),
                       width=width, height=height, showlegend=True)
 
     if save:
@@ -1054,7 +1056,7 @@ def plot_network_overview_hybrid(
         lon=lon, lat=lat, mode="markers",
         marker=dict(size=sizes, color=log_s, colorscale=colorscale,
                     cmin=cmin, cmax=cmax, opacity=0.9,
-                    colorbar=dict(title="log₁₀(strength)")),
+                    colorbar=dict(title="log<sub>10</sub>(strength)")),
         text=[f"cell {n}<br>strength {s:.3e}" for n, s in zip(nodes, strength)],
         hoverinfo="text", showlegend=False,
     ))
@@ -1082,8 +1084,8 @@ def plot_network_overview_hybrid(
     pct = int(round(link_top_frac * 100))
     _what = "Network overview + DISS faults" if draw_faults else "Network overview"
     title_text = pres_title(
-        f"{_what}: {title}",
-        f"all {len(nodes):,} cells, colour = log₁₀(weighted strength), "
+        f"{_what}: {title}" if title else _what,
+        f"all {len(nodes):,} cells, colour = log<sub>10</sub>(weighted strength), "
         f"top-{pct}% strongest links",
     )
 
@@ -1100,7 +1102,11 @@ def plot_network_overview_hybrid(
 
     fig.update_layout(mapbox=map_cfg,
                       margin={"r": 0, "t": 55, "l": 0, "b": 0},
-                      title=dict(text=title_text, x=0.02, xanchor="left"),
+                      title=dict(text=title_text, x=0.45, xanchor="center"),
+                      # legend (DISS faults key) bottom-left, clear of the right colorbar
+                      legend=dict(x=0.01, y=0.01, xanchor="left", yanchor="bottom",
+                                  bgcolor="rgba(255,255,255,0.7)",
+                                  bordercolor="#cccccc", borderwidth=1),
                       width=width, height=height, showlegend=draw_faults)
 
     if save:
@@ -1332,23 +1338,26 @@ def plot_partition_quality_hybrid(
     save: bool = True,
 ) -> None:
     """
-    Bar panels of the three intrinsic quality measures across methods, with the
-    optimisation direction marked in each subtitle.
+    Bar panels of the three intrinsic quality measures across methods, plus the
+    community count to contextualise them. Ncut and the map-equation codelength
+    are shown as ``1 − Ncut`` and ``− InfoMap`` so all three quality panels share
+    the "higher better" orientation (same convention as the course slides).
     """
     measures = [
-        ("modularity", "Modularity Q (higher better)"),
-        ("ncut",       "Normalized cut (lower better)"),
-        ("codelength", "Map equation L, bits (lower better)"),
+        ("n_communities", "Communities found", lambda s: s),
+        ("modularity",    "Modularity Q", lambda s: s),
+        ("ncut",          "1 − Ncut", lambda s: 1.0 - s),
+        ("codelength",    "− InfoMap", lambda s: -s),
     ]
     x = np.arange(len(quality_df))
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
-    for ax, (col, lab) in zip(axes, measures):
-        ax.bar(x, quality_df[col].to_numpy(), color="#5c6bc0")
+    fig, axes = plt.subplots(1, 4, figsize=(18, 4.5))
+    for ax, (col, lab, transform) in zip(axes, measures):
+        ax.bar(x, transform(quality_df[col].to_numpy()), color="#5c6bc0")
         ax.set_xticks(x)
         ax.set_xticklabels(quality_df.index, rotation=30, ha="right")
         ax.set_title(lab)
         ax.grid(axis="y", alpha=0.3)
-    fig.suptitle(f"Community-detection quality: {title}")
+    fig.suptitle(f"Community-detection quality: {title}" if title else "Community-detection quality")
     fig.tight_layout()
     if save:
         savefig(f"partition_quality_4measures_{_slug(title)}")
@@ -1363,121 +1372,6 @@ def plot_partition_quality_hybrid(
 # ------------------------------------------------------------------------------------
 # Interactive (Plotly) network layouts – zoom / pan / hover
 # ------------------------------------------------------------------------------------
-
-
-def plot_geo_edges_interactive_hybrid(
-    G: nx.Graph,
-    partition: Partition,
-    title: str = "",
-    method_name: str = "",
-    min_community_size: int = 10,
-    weight: str = "weight",
-    top_frac: float = 0.1,
-    bbox: tuple | None = None,
-    focus_community: int | None = None,
-    height: int = 820,
-    width: int = 900,
-    save: bool = True,
-    renderer: str | None = None,
-) -> None:
-    """
-    Interactive geographic network: the strongest links drawn on the project's
-    standard **``carto-positron`` tile basemap** (``go.Scattermapbox``), so it
-    matches the community/fault maps; nodes coloured by community and sized by
-    weighted degree, links as line traces beneath them. Zoom, pan and hover for
-    the cell behind every point; kaleido exports JPG+PDF (the tile basemap
-    rasterises fine here). Plotly counterpart of :func:`plot_geo_edges_hybrid`.
-
-    ``top_frac`` controls edge density; ``bbox`` (``(lon_min, lon_max, lat_min,
-    lat_max)``) or ``focus_community`` zoom into an area / a single community so
-    the individual aftershock-chain links become readable.
-
-    Pass ``renderer="png"`` (or ``"svg"`` / ``"pdf"``) to render a static image
-    instead of the live figure (avoids exhausting the browser WebGL context cap).
-    """
-    nodes = [n for n in G.nodes() if n in partition and "lat" in G.nodes[n]]
-    counts = pd.Series([partition[n] for n in nodes]).value_counts()
-    keep_comms = set(counts[counts >= min_community_size].index)
-    sel = [n for n in nodes if partition[n] in keep_comms]
-    if focus_community is not None:
-        sel = [n for n in sel if partition[n] == focus_community]
-    if bbox is not None:
-        lon_min, lon_max, lat_min, lat_max = bbox
-        sel = [n for n in sel
-               if lon_min <= G.nodes[n]["lon"] <= lon_max
-               and lat_min <= G.nodes[n]["lat"] <= lat_max]
-    if len(sel) == 0:
-        print("No nodes left to display after filtering.")
-        return
-
-    H = G.subgraph(sel)
-    pos = {n: (G.nodes[n]["lon"], G.nodes[n]["lat"]) for n in sel}
-
-    fig = go.Figure()
-
-    # weight-banded edge line traces (Scattermapbox), drawn beneath the nodes
-    for t in _link_traces_mapbox(H, pos, weight=weight, top_frac=top_frac):
-        fig.add_trace(t)
-
-    # node marker traces, one per community (mapbox markers take no outline)
-    comms = sorted({partition[n] for n in sel})
-    strength = {n: float(H.degree(n, weight=weight)) for n in sel}
-    smax = max(strength.values()) if strength else 1.0
-    smax = smax if smax > 0 else 1.0
-    for ci, c in enumerate(comms):
-        cn = [n for n in sel if partition[n] == c]
-        fig.add_trace(go.Scattermapbox(
-            lon=[pos[n][0] for n in cn],
-            lat=[pos[n][1] for n in cn],
-            mode="markers",
-            name=f"C{c}",
-            marker=dict(
-                size=[7 + 20 * (strength[n] / smax) for n in cn],
-                color=_PALETTE[ci % len(_PALETTE)],
-                opacity=0.85,
-            ),
-            text=[f"cell {n}<br>community {c}<br>weighted degree {strength[n]:.3g}"
-                  for n in cn],
-            hoverinfo="text",
-        ))
-
-    lons_all = np.array([pos[n][0] for n in sel], dtype=float)
-    lats_all = np.array([pos[n][1] for n in sel], dtype=float)
-    if bbox is not None:
-        # Frame the box with breathing room (node *selection* stays the box;
-        # only the *view* is padded) so it is not framed too tightly.
-        padx = 0.40 * (bbox[1] - bbox[0])
-        pady = 0.40 * (bbox[3] - bbox[2])
-        west, east = bbox[0] - padx, bbox[1] + padx
-        south, north = bbox[2] - pady, bbox[3] + pady
-    else:
-        padx = 0.15 * (float(np.ptp(lons_all)) or 1.0)
-        pady = 0.15 * (float(np.ptp(lats_all)) or 1.0)
-        west, east = lons_all.min() - padx, lons_all.max() + padx
-        south, north = lats_all.min() - pady, lats_all.max() + pady
-
-    scope = (f"community {focus_community}" if focus_community is not None
-             else "selected area" if bbox is not None else "full network")
-    pct = int(round(top_frac * 100))
-    fig.update_layout(
-        title=pres_title(
-            f"Geographic network, {method_name}: {title}",
-            f"top-{pct}% strongest links, {scope}; colour = community, size = weighted degree"),
-        mapbox=dict(
-            style="carto-positron",
-            center=dict(lat=0.5 * (south + north), lon=0.5 * (west + east)),
-            zoom=0,
-            bounds=dict(west=west, east=east, south=south, north=north),
-        ),
-        width=width, height=height,
-        legend=dict(title="Community", itemsizing="constant"),
-        margin=dict(l=10, r=10, t=80, b=10),
-    )
-    if save:
-        tag = (f"_c{focus_community}" if focus_community is not None
-               else "_bbox" if bbox is not None else "")
-        save_plotly(fig, f"geo_edges_int_{_slug(method_name)}_{_slug(title)}{tag}")
-    fig.show(renderer)
 
 
 # ====================================================================================

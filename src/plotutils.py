@@ -168,8 +168,11 @@ def setup_presentation_style(font: str = PRES_FONT) -> None:
 
     eqpres = go.layout.Template()
     eqpres.layout.font = dict(family=font, size=16, color="#222222")
+    # x=0.45 (not 0.5): nearly every Plotly figure here is a map with a right-side
+    # colorbar/legend, so centring over the figure puts the title right of the map's
+    # visual centre. The slight left nudge centres it over the map itself.
     eqpres.layout.title = dict(font=dict(family=font, size=22, color="#222222"),
-                               x=0.02, xanchor="left")
+                               x=0.45, xanchor="center")
     eqpres.layout.legend = dict(font=dict(family=font, size=15))
     eqpres.layout.paper_bgcolor = "white"
     eqpres.layout.plot_bgcolor = "white"
