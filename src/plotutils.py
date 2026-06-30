@@ -240,6 +240,7 @@ def savefig(name: str) -> None:
     """
     if not (_SAVE_JPG or _SAVE_PDF) or _FIGURES_DIR is None:
         return
+    name = re.sub(r"_+", "_", name).strip("_")   # no trailing/double '_' from empty slugs
     if _SAVE_PDF:
         path = _FIGURES_DIR / "pdf" / f"{name}.pdf"
         plt.savefig(path)
@@ -267,6 +268,7 @@ def save_plotly(fig, name: str) -> None:
     """
     if not (_SAVE_JPG or _SAVE_PDF) or _FIGURES_DIR is None:
         return
+    name = re.sub(r"_+", "_", name).strip("_")   # no trailing/double '_' from empty slugs
     try:
         import kaleido  # noqa: F401  – presence check only
     except ImportError:

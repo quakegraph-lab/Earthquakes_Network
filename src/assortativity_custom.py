@@ -249,6 +249,11 @@ def analyze_assortativity_with_randomization_hybrid(
     # ─────────────────────────────────────────────
     plt.figure(figsize=(15, 6))
 
+    # raw original
+    plt.scatter(df_raw_orig["k"], df_raw_orig["knn"],
+                color="gray", alpha=0.2, s=12,
+                label="Raw (original)")
+
     # original
     plt.scatter(df_bin_orig["k"], df_bin_orig["knn"],
                 color="purple", label="Original")

@@ -273,9 +273,6 @@ def plot_geo_top_n_interactive_hybrid(
         print("No valid centrality metrics found in dataframe.")
         return
 
-    depth_min = float(df["depth_km"].min())
-    depth_max = float(df["depth_km"].max())
-
     def _metric_trace(metric, visible, showscale):
         top = df.nlargest(top_n, metric).copy().reset_index(drop=True)
         top["rank"] = top.index + 1
@@ -288,18 +285,20 @@ def plot_geo_top_n_interactive_hybrid(
             "<b>%{customdata[0]}</b><br>"
             "Rank: %{customdata[1]}<br>"
             f"{lbl}: %{{customdata[2]:.5f}}<br>"
-            "Depth: %{customdata[3]:.0f} km<br>"
             "Lat: %{lat:.3f} | Lon: %{lon:.3f}<extra></extra>"
         )
-        custom = list(zip(top["cell_id"], top["rank"], top[metric], top["depth_km"]))
+        custom = list(zip(top["cell_id"], top["rank"], top[metric]))
+        # Colour by the centrality score itself (plasma: highest score = brightest):
+        # the colorbar then encodes the actual metric, and size + colour reinforce each other.
         return go.Scattermapbox(
             lat=top["lat"], lon=top["lon"], mode="markers",
             marker=dict(
                 size=top["marker_size"].tolist(),
-                color=top["depth_km"].tolist(),
-                colorscale="plasma", cmin=depth_min, cmax=depth_max,
+                color=top[metric].tolist(),
+                colorscale="plasma",
+                cmin=float(top[metric].min()), cmax=float(top[metric].max()),
                 showscale=showscale,
-                colorbar=dict(title="Depth (km)") if showscale else None,
+                colorbar=dict(title=lbl) if showscale else None,
             ),
             hovertemplate=hover, customdata=custom, visible=visible, name=lbl,
         )

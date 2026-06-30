@@ -1039,9 +1039,11 @@ def plot_network_overview_hybrid(
         return
 
     if by_degree:
-        # degree: linear colour + linear sizing
+        # degree: linear colour + linear sizing. Use the TRUE min/max (no percentile
+        # clip): degree is a plain linear count, so the colorbar should match the
+        # standalone hub map. (clip_pct is only needed for strength's ~6-decade range.)
         color_vals = vals
-        cmin, cmax = (np.percentile(vals, clip_pct) if vals.size else (None, None))
+        cmin, cmax = (float(vals.min()), float(vals.max())) if vals.size else (None, None)
         cbar_title = "Degree"
         s_base = vals
     else:
@@ -1103,13 +1105,19 @@ def plot_network_overview_hybrid(
                 name="DISS faults" if key == "css" else "DISS ISS",
                 hoverinfo="skip", showlegend=(key == "css")))
 
-    pct = int(round(link_top_frac * 100))
-    _what = "Network overview + DISS faults" if draw_faults else "Network overview"
+    link_pct = int(round(link_top_frac * 100))
+    node_pct = (f"top {int(round(node_top_frac * 100))}%"
+                if node_top_frac is not None and 0.0 < node_top_frac < 1.0
+                else "all")
+    colour_short = "degree" if by_degree else "strength"
     colour_lbl = "degree" if by_degree else "log<sub>10</sub>(weighted strength)"
+    _what = (f"Network overview by {colour_short} "
+             f"({node_pct} nodes, top {link_pct}% links)")
+    if draw_faults:
+        _what += " + DISS faults"
     title_text = pres_title(
-        f"{_what}: {title}" if title else _what,
-        f"all {len(nodes):,} cells, colour = {colour_lbl}, "
-        f"top-{pct}% strongest links",
+        f"{_what} – {title}" if title else _what,
+        f"colour = {colour_lbl}, {len(nodes):,} cells shown",
     )
 
     map_cfg = {"style": px_style,
@@ -1361,10 +1369,16 @@ def plot_partition_quality_hybrid(
     save: bool = True,
 ) -> None:
     """
-    Bar panels of the three intrinsic quality measures across methods, plus the
+    Point panels of the three intrinsic quality measures across methods, plus the
     community count to contextualise them. Ncut and the map-equation codelength
     are shown as ``1 − Ncut`` and ``− InfoMap`` so all three quality panels share
     the "higher better" orientation (same convention as the course slides).
+
+    Each measure is drawn as a marker per method on an auto-scaled y-axis (same
+    style as the course-slide comparison figure). Markers rather than bars-from-
+    zero so the negative codelength (``− InfoMap``) reads as a ranking instead of
+    a large downward bar, and so small differences in the bounded measures stay
+    visible. Laid out 2×2 for slide use.
     """
     measures = [
         ("n_communities", "Communities found", lambda s: s),
@@ -1373,12 +1387,17 @@ def plot_partition_quality_hybrid(
         ("codelength",    "− InfoMap", lambda s: -s),
     ]
     x = np.arange(len(quality_df))
-    fig, axes = plt.subplots(1, 4, figsize=(18, 4.5))
-    for ax, (col, lab, transform) in zip(axes, measures):
-        ax.bar(x, transform(quality_df[col].to_numpy()), color="#5c6bc0")
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+    for ax, (col, lab, transform) in zip(axes.flat, measures):
+        y = transform(quality_df[col].to_numpy())
+        ax.plot(x, y, color="#5c6bc0", linewidth=1.5, alpha=0.55, zorder=2)
+        ax.scatter(x, y, s=130, color="#5c6bc0", edgecolor="white",
+                   linewidth=1.2, zorder=3)
         ax.set_xticks(x)
         ax.set_xticklabels(quality_df.index, rotation=30, ha="right")
         ax.set_title(lab)
+        ax.set_xlim(-0.5, len(x) - 0.5)
+        ax.margins(y=0.18)
         ax.grid(axis="y", alpha=0.3)
     fig.suptitle(f"Community-detection quality: {title}" if title else "Community-detection quality")
     fig.tight_layout()
