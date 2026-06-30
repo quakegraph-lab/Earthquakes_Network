@@ -64,7 +64,7 @@ def fit_gr_law(
         fig, ax = plt.subplots(figsize=(10, 5))
         ax.scatter(cumulative_N.index, np.log10(cumulative_N.values),
                    alpha=0.7, edgecolors="k", label="Observed")
-        ax.plot(mags_fit, intercept - b_value * mags_fit, linewidth=2,
+        ax.plot(mags_fit, intercept - b_value * mags_fit, linewidth=2, color='red', linestyle='--', alpha=0.6,
                 label=f"Fit M≤{max_mag}  b={b_value:.2f}  a={intercept:.2f}")
         ax.set_title(f"Gutenberg-Richter (M ≤ {max_mag})")
         ax.set_xlabel("Magnitude M")
