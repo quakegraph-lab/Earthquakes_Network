@@ -11,7 +11,8 @@ distribution, centrality, community detection), and the resulting communities ar
 compared with documented seismic sequences and the DISS fault database.
 
 ## What's inside
-
+- `ITALY_preanalysis.ipynb` - the preanalysis of data: Temporal Distribution, 
+   Magnitude and Depth Analysis, Gutenberg-Richter Law, Omori Law — Amatrice 2016.
 - `abe_suzuki_network_analysis.ipynb` – the main analysis: network
   construction, degree distribution and power-law fit, centrality, community
   detection (Louvain, InfoMap, HDBSCAN, mixed-membership SBM), assortativity,
@@ -19,7 +20,7 @@ compared with documented seismic sequences and the DISS fault database.
 - `community_known_eq.ipynb` – a focused check of whether the detected
   communities recover four documented Italian sequences (L'Aquila 2009,
   Amatrice–Norcia 2016, Emilia 2012, Umbria–Marche 1997).
-- `presentation.pdf` - the final presentation to expose.
+- `network_science_presentation.pdf` - the final presentation to expose.
 
 The notebooks contain the figures and a brief discussion.
 
@@ -39,7 +40,7 @@ jupyter-notebook . &
 ```
 
 The INGV catalog (`data/INGV/`, M ≥ 1.5) is included in the repository; see
-`data/INGV/data_info.txt` for the download parameters.
+`data/INGV/data_info.txt` for the download parameters used.
 
 ## Reference
 
