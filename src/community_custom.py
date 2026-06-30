@@ -1189,7 +1189,7 @@ def compute_nmi_matrix(partitions: dict) -> pd.DataFrame:
     return pd.DataFrame(mat, index=methods, columns=methods)
 
 
-def plot_nmi_heatmap(nmi_df: pd.DataFrame):
+def plot_nmi_heatmap(nmi_df: pd.DataFrame, tag: str = "", save: bool = True):
     plt.figure(figsize=(7, 6))
 
     sns.heatmap(
@@ -1205,6 +1205,8 @@ def plot_nmi_heatmap(nmi_df: pd.DataFrame):
 
     plt.title("NMI between community methods")
     plt.tight_layout()
+    if save:
+        savefig(f"community_nmi_matrix_{tag}")
     plt.show()
 
 
