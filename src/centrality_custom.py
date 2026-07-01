@@ -441,7 +441,7 @@ def plot_geo_centrality_overlap_hybrid(
         color="n_metrics",
         size="n_metrics",
         size_max=22,
-        color_continuous_scale="YlOrRd",
+        color_continuous_scale="plasma",
         range_color=[1, len(available)],
         hover_name="cell_id",
         hover_data={
@@ -469,7 +469,7 @@ def plot_geo_centrality_overlap_hybrid(
         width=width,
         height=height,
         coloraxis_colorbar=dict(
-            title="# Metrics<br>top-N",
+            title="metrics<br>agreeing",
             tickvals=list(range(1, len(available) + 1)),
         ),
     )
